@@ -1,5 +1,7 @@
 # arrow-pbt
 
+[![CI](https://github.com/mbutrovich/arrow-pbt/actions/workflows/ci.yml/badge.svg)](https://github.com/mbutrovich/arrow-pbt/actions/workflows/ci.yml)
+
 Property-based tests for [arrow-rs](https://github.com/apache/arrow-rs) and the projects built on it. One generator produces valid Arrow arrays of every type in every physical layout the Arrow format allows. An independent oracle reads any array into plain values. Short properties check the compute kernels against both. A failing case shrinks to a small input and reports the seed that reproduces it.
 
 The properties have found 39 bugs on arrow-rs `main`. Each was reported with a reproduction or linked to an existing issue. 23 of the 39 are fixed. [docs/known-bugs.md](docs/known-bugs.md) lists them.

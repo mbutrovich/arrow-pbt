@@ -1,5 +1,6 @@
 # The checks in CONTRIBUTING.md, the minimum Rust versions the README
-# states, and a spell check, on every push to main and every pull request
+# states, a spell check, and the mutation runner's memory cap, on every push
+# to main and every pull request
 name: CI
 
 on:
@@ -21,7 +22,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The toolchain rust-toolchain.toml names, which cargo then uses
       - run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal --component rustfmt,clippy
       - uses: Swatinem/rust-cache@v2
@@ -43,19 +44,38 @@ jobs:
           - rust: "1.95"
             packages: --workspace
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup toolchain install ${{ matrix.rust }} --profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.rust }}
       - run: cargo +${{ matrix.rust }} check ${{ matrix.packages }} --all-targets
 
-  typos:
+  tools:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The version arrow-rs pins. A newer one can flag new words
       - uses: taiki-e/install-action@v2
         with:
           tool: typos@1.37.0
       - run: typos
+      # tools/mutation/run.py caps each worker by the resident memory of its
+      # process group, which it reads from `ps`. Check that it reads all of a
+      # group on Linux
+      - name: The mutation runner reads a process group's memory
+        run: |
+          python3 -B - <<'EOF'
+          import importlib.util, subprocess, sys, time
+          spec = importlib.util.spec_from_file_location("run", "tools/mutation/run.py")
+          run = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(run)
+          # Two processes in one new process group, each writing every byte it holds
+          hold = 'import time; x = b"x" * ({} * 1024 * 1024); time.sleep(5)'
+          p = subprocess.Popen(f"python3 -c '{hold.format(300)}' & python3 -c '{hold.format(200)}' & wait", shell=True, start_new_session=True)
+          time.sleep(3)
+          mb = run.group_rss_kb(p.pid) // 1024
+          p.wait()
+          print(f"process group of 300 MB and 200 MB: {mb} MB")
+          sys.exit(0 if mb >= 500 else 1)
+          EOF
