@@ -136,6 +136,6 @@ Parquet is the largest crate in arrow-rs and has no properties here yet. proptes
 
 Each downstream project is tested through an adapter crate in this repository, as [Downstream adapters](design.md#downstream-adapters) in the design describes.
 
-`arrow-pbt-datafusion` checks the broadcast law for `abs`, `upper`, `substr` and `nullif`: calling a function with some arguments as scalars gives the same result as calling it with those scalars broadcast to arrays. On DataFusion `main` at 1da3cf049 with arrow-rs `main` at 152f0d33c, 10,000 cases of each found no bug. It does not cover DataFusion, which would be a project of its own.
+`arrow-pbt-datafusion` checks the broadcast law for `abs`, `upper`, `substr` and `nullif`: calling a function with some arguments as scalars gives the same result as calling it with those scalars broadcast to arrays. On DataFusion `main` at 1da3cf049 with arrow-rs `main` at 9ffd63d528, 10,000 cases of each found no bug on 2026-10-30. It does not cover DataFusion, which would be a project of its own.
 
 iceberg-rust has no adapter yet. Its partition transforms are defined exactly by the Iceberg spec, so their properties would compare each output row with the spec's definition computed from the oracle's values, and the array path with the single-value `Datum` path.
