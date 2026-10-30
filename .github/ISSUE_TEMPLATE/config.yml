@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: A bug in arrow-rs that a property found
+    url: https://github.com/apache/arrow-rs/issues/new/choose
+    about: File it in arrow-rs with a minimal reproduction. CONTRIBUTING.md says how to reduce one.
+  - name: A bug in DataFusion that a property found
+    url: https://github.com/apache/datafusion/issues/new/choose
+    about: File it in DataFusion with a minimal reproduction. CONTRIBUTING.md says how to reduce one.

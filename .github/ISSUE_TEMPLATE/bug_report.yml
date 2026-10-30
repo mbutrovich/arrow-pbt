@@ -1,0 +1,20 @@
+name: A problem in arrow-pbt
+description: A property, the generator, the oracle, or a tool is wrong
+body:
+  - type: textarea
+    attributes:
+      label: What is wrong
+      description: The property, strategy or tool, and what it does wrong. A bug in arrow-rs or a downstream project goes to that project instead.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: How to reproduce it
+      description: The command, the seed and case count, and the output.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What it should do
+      description: The behavior you expected, and its source, such as the Arrow format specification or the kernel's rustdoc.

@@ -1,0 +1,18 @@
+# Tests the arrow-rs checkout at this path instead of the commit Cargo.toml
+# names. Point it at any checkout or branch whose version matches Cargo.toml.
+# Not committed: copy config.toml.example and edit the path
+[patch.crates-io]
+arrow = { path = "/path/to/arrow-rs/arrow" }
+arrow-arith = { path = "/path/to/arrow-rs/arrow-arith" }
+arrow-array = { path = "/path/to/arrow-rs/arrow-array" }
+arrow-buffer = { path = "/path/to/arrow-rs/arrow-buffer" }
+arrow-cast = { path = "/path/to/arrow-rs/arrow-cast" }
+arrow-csv = { path = "/path/to/arrow-rs/arrow-csv" }
+arrow-data = { path = "/path/to/arrow-rs/arrow-data" }
+arrow-ipc = { path = "/path/to/arrow-rs/arrow-ipc" }
+arrow-json = { path = "/path/to/arrow-rs/arrow-json" }
+arrow-ord = { path = "/path/to/arrow-rs/arrow-ord" }
+arrow-row = { path = "/path/to/arrow-rs/arrow-row" }
+arrow-schema = { path = "/path/to/arrow-rs/arrow-schema" }
+arrow-select = { path = "/path/to/arrow-rs/arrow-select" }
+arrow-string = { path = "/path/to/arrow-rs/arrow-string" }

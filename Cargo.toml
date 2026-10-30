@@ -1,0 +1,209 @@
+[workspace]
+members = ["arrow-pbt-datafusion"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/mbutrovich/arrow-pbt"
+
+# The arrow-rs version under test, for every crate here. `[patch.crates-io]`
+# below replaces these with a commit of arrow-rs `main` (see README.md)
+[workspace.dependencies]
+arrow-arith = "60"
+arrow-array = { version = "60", features = ["ffi", "chrono-tz"] }
+arrow-buffer = "60"
+arrow-cast = "60"
+arrow-data = "60"
+arrow-ipc = "60"
+arrow-ord = "60"
+arrow-row = "60"
+arrow-schema = "60"
+arrow-select = "60"
+arrow-string = "60"
+# Same declaration as arrow-rs/parquet/Cargo.toml
+proptest = { version = "1.0", default-features = false, features = ["std"] }
+
+# The arrow-rs commit under test, for every crate in the workspace, including
+# the arrow crates DataFusion depends on. `.cargo/config.toml` can override it
+[patch.crates-io]
+arrow = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-arith = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-array = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-buffer = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-cast = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-csv = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-data = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-ipc = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-json = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-ord = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-row = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-schema = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-select = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+arrow-string = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+
+[package]
+name = "arrow-pbt"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.88"
+license.workspace = true
+repository.workspace = true
+description = "Property-based tests for arrow-rs: a generator of valid Arrow arrays in every physical layout, an independent oracle, and properties for the compute kernels"
+publish = false
+
+[dependencies]
+arrow-arith.workspace = true
+arrow-array.workspace = true
+arrow-buffer.workspace = true
+arrow-cast.workspace = true
+arrow-data.workspace = true
+arrow-ipc.workspace = true
+arrow-ord.workspace = true
+arrow-row.workspace = true
+arrow-schema.workspace = true
+arrow-select.workspace = true
+arrow-string.workspace = true
+proptest.workspace = true
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"
+rand = { version = "0.9", features = ["small_rng"] }
+
+[lints]
+workspace = true
+
+# Lints and formatting follow arrow-rs (its Cargo.toml and rustfmt.toml)
+[workspace.lints.rust]
+explicit_outlives_requirements = "warn"
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2021_prelude_collisions = "warn"
+semicolon_in_expressions_from_macros = "warn"
+trivial_numeric_casts = "warn"
+unexpected_cfgs = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_extern_crates = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+
+# Deliberately left off: all the noise of spelling out elided lifetimes and
+# redundant qualifications, without catching anything that matters.
+# `elided_lifetimes_in_paths` is part of `rust_2018_idioms`, so it has to be
+# turned off explicitly; the other two are `allow` by default and are listed
+# only to record the decision.
+elided_lifetimes_in_paths = "allow"
+trivial_casts = "allow"
+unused_qualifications = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Extra lints on top of `all` and `pedantic`, mostly from the `restriction` and
+# `nursery` groups:
+allow_attributes = "warn"
+as_ptr_cast_mut = "warn"
+branches_sharing_code = "warn"
+clear_with_drain = "warn"
+coerce_container_to_any = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+default_union_representation = "warn"
+disallowed_script_idents = "warn"
+doc_include_without_cfg = "warn"
+empty_enum_variants_with_brackets = "warn"
+equatable_if_let = "warn"
+exit = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+imprecise_flops = "warn"
+infinite_loop = "warn"
+iter_on_empty_collections = "warn"
+iter_on_single_items = "warn"
+iter_with_drain = "warn"
+large_include_file = "warn"
+large_stack_frames = "warn"
+literal_string_with_formatting_args = "warn"
+lossy_float_literal = "warn"
+mutex_integer = "warn"
+needless_pass_by_ref_mut = "warn"
+needless_type_cast = "warn"
+negative_feature_names = "warn"
+non_zero_suggestions = "warn"
+nonstandard_macro_braces = "warn"
+or_fun_call = "warn"
+path_buf_push_overwrite = "warn"
+pathbuf_init_then_push = "warn"
+precedence_bits = "warn"
+pub_without_shorthand = "warn"
+rc_mutex = "warn"
+redundant_type_annotations = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+return_and_then = "warn"
+set_contains_or_insert = "warn"
+single_option_map = "warn"
+string_lit_as_bytes = "warn"
+string_lit_chars_any = "warn"
+suspicious_xor_used_as_pow = "warn"
+todo = "warn"
+trailing_empty_array = "warn"
+trait_duplication_in_bounds = "warn"
+tuple_array_conversions = "warn"
+uninhabited_references = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
+unnecessary_struct_initialization = "warn"
+unused_peekable = "warn"
+unused_rounding = "warn"
+useless_let_if_seq = "warn"
+verbose_file_reads = "warn"
+wildcard_dependencies = "warn"
+
+# Lints in `pedantic` that we currently allow.
+# Some of these we should consider enabling in the future.
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+default_trait_access = "allow"
+doc_markdown = "allow"
+enum_glob_use = "allow"
+float_cmp = "allow"
+if_not_else = "allow"
+ignore_without_reason = "allow"
+implicit_hasher = "allow"
+inline_always = "allow"
+items_after_statements = "allow"
+manual_assert = "allow"
+many_single_char_names = "allow"
+map_unwrap_or = "allow"
+match_bool = "allow"
+match_same_arms = "allow"
+missing_errors_doc = "allow"
+missing_fields_in_debug = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+needless_bitwise_bool = "allow"
+needless_for_each = "allow"
+needless_pass_by_value = "allow"
+non_std_lazy_statics = "allow"
+range_plus_one = "allow"
+redundant_closure_for_method_calls = "allow"
+return_self_not_must_use = "allow"
+semicolon_if_nothing_returned = "allow"
+similar_names = "allow"
+single_match_else = "allow"
+struct_excessive_bools = "allow"
+struct_field_names = "allow"
+too_many_lines = "allow"
+trivially_copy_pass_by_ref = "allow"
+unicode_not_nfc = "allow"
+unnecessary_debug_formatting = "allow"
+unnecessary_wraps = "allow"
+unreadable_literal = "allow"
+unused_self = "allow"
+used_underscore_items = "allow"
+verbose_bit_mask = "allow"
+wildcard_imports = "allow"
