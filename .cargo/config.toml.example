@@ -1,6 +1,10 @@
 # Tests the arrow-rs checkout at this path instead of the commit Cargo.toml
 # names. Point it at any checkout or branch whose version matches Cargo.toml.
-# Not committed: copy config.toml.example and edit the path
+# Not committed: copy config.toml.example and edit the path.
+#
+# To test a branch on GitHub, such as a pull request's, without a checkout,
+# give each crate a git source instead:
+# arrow = { git = "https://github.com/<user>/arrow-rs", branch = "<branch>" }
 [patch.crates-io]
 arrow = { path = "/path/to/arrow-rs/arrow" }
 arrow-arith = { path = "/path/to/arrow-rs/arrow-arith" }

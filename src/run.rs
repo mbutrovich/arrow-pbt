@@ -6,9 +6,12 @@
 //! - `ARROW_PBT_SHRINK`: shrink steps after a failure, 1000 by default
 //! - `ARROW_PBT_REASONS`: when set, print the discards by reason
 //! - `ARROW_PBT_FULL`: when set, print messages and inputs without truncation
+//! - `ARROW_PBT_NO_KNOWN`: when set, fail instead of discarding known bugs
+//!   (see [`crate::known`])
 //!
 //! A value that does not parse is an error rather than a fallback to the
-//! default. The same seed and case count always give the same cases.
+//! default. The same seed and case count always give the same cases, and a
+//! failure prints the command that reruns it with these settings.
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -72,12 +75,36 @@ pub fn check_with(name: &str, run_seed: impl Fn(u64, u32, u32) -> Outcome) {
         }
         assert!(
             !o.failed,
-            "{name} failed with seed {seed} after {} cases: {}\nminimal input: {}\nrerun with: ARROW_PBT_SEEDS={seed} ARROW_PBT_CASES={cases} cargo test{package} {name}",
+            "{name} failed with seed {seed} after {} cases: {}\nminimal input: {}\nrerun with: {}",
             o.cases_to_fail.unwrap_or(o.execs),
             o.message,
-            o.minimal
+            o.minimal,
+            rerun(name, seed, cases, &package, |v| {
+                var_os(v).map(|x| x.to_string_lossy().into_owned())
+            })
         );
     }
+}
+
+/// The command that reruns `name` on `seed`, with each setting that is set
+/// and changes the failure or what it prints. `var` reads a variable
+fn rerun(
+    name: &str,
+    seed: u64,
+    cases: u32,
+    package: &str,
+    var: impl Fn(&str) -> Option<String>,
+) -> String {
+    let mut settings = vec![
+        format!("ARROW_PBT_SEEDS={seed}"),
+        format!("ARROW_PBT_CASES={cases}"),
+    ];
+    settings.extend(
+        ["ARROW_PBT_SHRINK", "ARROW_PBT_NO_KNOWN", "ARROW_PBT_FULL"]
+            .into_iter()
+            .filter_map(|v| var(v).map(|x| format!("{v}={x}"))),
+    );
+    format!("{} cargo test{package} {name}", settings.join(" "))
 }
 
 /// The result of running one property for one seed
@@ -211,4 +238,29 @@ pub(crate) fn caught(
             panic_message(&*p)
         )))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rerun;
+
+    #[test]
+    fn rerun_carries_the_switches_that_are_set() {
+        let none = |_: &str| None;
+        assert_eq!(
+            rerun("take", 3, 256, " -p arrow-pbt", none),
+            "ARROW_PBT_SEEDS=3 ARROW_PBT_CASES=256 cargo test -p arrow-pbt take"
+        );
+        let set = |v: &str| match v {
+            "ARROW_PBT_NO_KNOWN" => Some("1".to_string()),
+            "ARROW_PBT_SHRINK" => Some("0".to_string()),
+            // Only prints discards, so it does not change the failure
+            "ARROW_PBT_REASONS" => Some("1".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            rerun("arity", 1, 10, "", set),
+            "ARROW_PBT_SEEDS=1 ARROW_PBT_CASES=10 ARROW_PBT_SHRINK=0 ARROW_PBT_NO_KNOWN=1 cargo test arity"
+        );
+    }
 }

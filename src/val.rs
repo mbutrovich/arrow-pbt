@@ -15,17 +15,30 @@ use std::cell::Cell;
 
 use crate::spec;
 
+/// The logical value of one row, which [`vals`] reads and models are written
+/// in. A dictionary or run-end encoded row reads as its value, and a null
+/// union row reads as `Null`, without its type id
 #[derive(Clone, Debug, PartialEq)]
 pub enum Val {
+    /// A null row, of any type
     Null,
+    /// A `Boolean` row
     Bool(bool),
+    /// An `Int32` row
     I32(i32),
+    /// An `Int64` row
     I64(i64),
+    /// A `Utf8`, `LargeUtf8` or `Utf8View` row
     Str(String),
+    /// A `Binary`, `LargeBinary`, `BinaryView` or `FixedSizeBinary` row
     Bytes(Vec<u8>),
-    /// A fixed-width value as its little-endian bytes
+    /// Any other fixed-width row (the other integers, floats, decimals,
+    /// temporal types and intervals), as its little-endian bytes
     Raw(Vec<u8>),
+    /// A row of any list type, or of a `Map`, whose entries are `Struct`s of
+    /// the key and the value
     List(Vec<Val>),
+    /// A `Struct` row, one value per field
     Struct(Vec<Val>),
     /// The type id and the value in the selected child
     Union(i8, Box<Val>),

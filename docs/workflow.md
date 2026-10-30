@@ -91,7 +91,7 @@ The rows must match on whether each property failed, the cases it ran, and its d
 
 For arrow-rs:
 
-1. Write the property in the module for its crate. Compute the expected output from the oracle (`val::vals`), call the kernel, and check the output with `val::check_rows`, which validates it and compares its values.
+1. Write the property in the module that holds the properties most like it, which [Layout](../README.md#layout) in the README lists. Compute the expected output from the oracle (`val::vals`), call the kernel, and check the output with `val::check_rows`, which validates it and compares its values.
 2. Give it a strategy in `src/cases.rs` that covers the kernel's documented domain, using the shared generator.
 3. Register it in `src/registry.rs` and add a `#[test]` in `tests/properties.rs`.
 4. Break the oracle on purpose a few ways and confirm the property fails each time. Build each broken copy into its own binary and compare the binaries' hashes, because Cargo reuses a build when the copied sources keep their old modification times.

@@ -1,10 +1,11 @@
-//! Validity per the Arrow Columnar spec (apache/arrow
-//! docs/source/format/Columnar.rst, blob f95d7e8), written from the spec text
-//! and independent of arrow-rs's `ArrayData::validate_full`. Only slots the
-//! spec defines are checked: content under nulls is undefined (lines 442-445).
-//! Line numbers without a file name refer to Columnar.rst. Schema.fbs line
-//! numbers here and elsewhere in this crate refer to apache/arrow
-//! format/Schema.fbs, blob 67b7719.
+//! Validity per the Arrow Columnar spec, [Columnar.rst at apache/arrow
+//! fcf8f30142](https://github.com/apache/arrow/blob/fcf8f3014227cafe24deeb044c2d51f5fc9902e5/docs/source/format/Columnar.rst),
+//! written from the spec text and independent of arrow-rs's
+//! `ArrayData::validate_full`. Only slots the spec defines are checked:
+//! content under nulls is undefined (lines 442-445). Line numbers without a
+//! file name refer to Columnar.rst. Schema.fbs line numbers here and
+//! elsewhere in this crate refer to [Schema.fbs at apache/arrow
+//! e2524aa088](https://github.com/apache/arrow/blob/e2524aa088cd6a391b40635245d757542e2b2810/format/Schema.fbs).
 
 use arrow_buffer::{ArrowNativeType, Buffer};
 use arrow_data::ArrayData;

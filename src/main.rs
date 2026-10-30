@@ -3,15 +3,15 @@
 //! - `arrow-pbt run <properties|all> <seeds> <cases> [shrink]` prints one TSV
 //!   row per property and seed: property, seed, failed, cases to the
 //!   failure, cases run, milliseconds, message, minimal input, discards.
+//! - `arrow-pbt list` prints the name of every property.
 //! - `arrow-pbt coverage <seed> <cases>` reports the share of generated
 //!   arrays, masks and indices that show each feature.
 //! - `arrow-pbt inventory <seed> <cases>` writes Markdown tables of the type
 //!   families, layout features and kernel paths each property's inputs reach.
 //!
 //! `ARROW_PBT_THREADS` sets the workers (default: the available parallelism),
-//! `ARROW_PBT_REASONS=1` prints discards by reason, `ARROW_PBT_FULL=1` prints
-//! messages untruncated, `ARROW_PBT_PANICS=1` keeps panic messages, and
-//! `ARROW_PBT_NO_KNOWN=1` turns known-bug discards into failures.
+//! and `ARROW_PBT_PANICS=1` keeps panic messages. `ARROW_PBT_REASONS`,
+//! `ARROW_PBT_FULL` and `ARROW_PBT_NO_KNOWN` work as in `arrow_pbt::run`.
 
 use arrow_pbt::registry::ARITH_ROWS;
 use arrow_pbt::run::{env, seeded_runner, seeds};
@@ -26,7 +26,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::thread::available_parallelism;
 
-const USAGE: &str = "usage: arrow-pbt run <properties|all> <seeds> <cases> [shrink] | coverage <seed> <cases> | inventory <seed> <cases>";
+const USAGE: &str = "usage: arrow-pbt run <properties|all> <seeds> <cases> [shrink] | list | coverage <seed> <cases> | inventory <seed> <cases>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -57,7 +57,8 @@ fn cli(args: &[String]) -> Result<(), String> {
     }
     match args.get(1).map(String::as_str) {
         Some("run") => {
-            let props = registry::properties(&arg::<String>(args, 2, "properties")?)?;
+            let props = registry::properties(&arg::<String>(args, 2, "properties")?)
+                .map_err(|e| format!("{e}. `arrow-pbt list` prints the names"))?;
             let seeds = seeds(&arg::<String>(args, 3, "seeds")?)?;
             let cases: u32 = arg(args, 4, "cases")?;
             let shrink: u32 = if args.len() > 5 {
@@ -96,6 +97,12 @@ fn cli(args: &[String]) -> Result<(), String> {
                 }
             }
         }
+        Some("list") => {
+            for e in registry::all_properties() {
+                println!("{}", e.name);
+            }
+        }
+        Some("help" | "--help" | "-h") => println!("{USAGE}"),
         Some("coverage") => coverage_run(arg(args, 2, "seed")?, arg(args, 3, "cases")?),
         Some("inventory") => inventory_run(arg(args, 2, "seed")?, arg(args, 3, "cases")?, threads),
         Some(c) => return Err(format!("unknown command {c}")),
