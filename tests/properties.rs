@@ -1,5 +1,5 @@
 //! One test per property. `ARROW_PBT_CASES`, `ARROW_PBT_SEEDS` and
-//! `ARROW_PBT_SHRINK` set the run size (see `arrow_pbt::registry::check`).
+//! `ARROW_PBT_SHRINK` set the run size (see `arrow_pbt::run`).
 //! A failure prints the shrunk input and the command that reruns it.
 
 /// arrow-select

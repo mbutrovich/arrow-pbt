@@ -3,8 +3,8 @@
 //! and independent of arrow-rs's `ArrayData::validate_full`. Only slots the
 //! spec defines are checked: content under nulls is undefined (lines 442-445).
 //! Line numbers without a file name refer to Columnar.rst. Schema.fbs line
-//! numbers here and in `gen.rs` refer to apache/arrow format/Schema.fbs, blob
-//! 67b7719.
+//! numbers here and elsewhere in this crate refer to apache/arrow
+//! format/Schema.fbs, blob 67b7719.
 
 use arrow_buffer::{ArrowNativeType, Buffer};
 use arrow_data::ArrayData;
