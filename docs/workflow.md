@@ -47,7 +47,7 @@ A failing property stops at its first failure, so a known bug would mask every o
 4. **Add a row to the open table in [known-bugs.md](known-bugs.md).**
 5. **Check what the filter costs.** Run the property with `ARROW_PBT_REASONS=1`. A filter that discards a large share of a property's cases also stops it from finding other bugs in those cases. The filter for [apache/arrow-rs#11607](https://github.com/apache/arrow-rs/issues/11607) discards about 10% of `row_format`'s cases.
 
-When the bug aborts the process, as undefined behavior that a standard library check catches in a debug build does, its signature cannot be read after the call. The filter then checks the bug's precondition before the call, by calling arrow-rs on its own, never by input type. The filter for `take_record_batch` calls `take` on the first column and discards the case when it returns for an index out of bounds.
+When the bug aborts the process, as undefined behavior that a standard library check catches in a debug build does, its signature cannot be read after the call. The filter then checks the bug's precondition before the call, by calling the project on its own or by computing the condition from the input's values, never by input type. The filter for `take_record_batch` calls `take` on the first column and discards the case when it returns for an index out of bounds.
 
 When the bug is in a path the generator itself uses to build arrays (FFI import, for example), the generator falls back to another layout and counts each fallback instead. `arrow-pbt coverage` prints those counts, so the gap stays visible.
 
@@ -102,7 +102,7 @@ For arrow-rs:
 4. Break the oracle on purpose a few ways and confirm the property fails each time. Build each broken copy into its own binary and compare the binaries' hashes, because Cargo reuses a build when the copied sources keep their old modification times.
 5. Run it with a few thousand cases and read its discards by reason.
 
-For a DataFusion scalar function, add a line to `law_tests!` in `arrow-pbt-datafusion/tests/functions.rs` with the function and its signatures, the argument types it accepts after coercion. The test first checks each signature with DataFusion's `fields_with_udf`, which leaves a signature unchanged only if the planner would pass it as it is, then runs `check_broadcast` and `check_row_by_row` through `run::check`. Run it with `ARROW_PBT_CASES` in the thousands.
+For a DataFusion scalar function, add a line to `law_tests!` in `arrow-pbt-datafusion/tests/functions.rs` with the function and its signatures, the argument types it accepts after coercion. The test first checks each signature with DataFusion's `fields_with_udf`, which leaves a signature unchanged only if the planner would pass it as it is, then runs `check_broadcast` and `check_row_by_row` through `run::check`. A function with a known bug calls `laws_with` instead, whose hooks hold the filters: one before the call, for a bug that aborts the process, and one that maps a failure to its discard. `repeat` uses the first, `ceil` the second, and `lpad` both. Run it with `ARROW_PBT_CASES` in the thousands.
 
 ## Adding an adapter
 

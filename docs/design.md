@@ -139,6 +139,7 @@ Iceberg types map to a subset of arrow types, and one Iceberg type often has sev
 - `array(ty, n)` for an array of a given type and length, such as a function's argument or a batch's column, and `array_in(ty, n, domain)` for one whose values come from a `ValueDomain`. [Decimals past their precision](#what-the-generator-varies) says which domain an adapter needs.
 - `run::check`, the runner every property goes through, with its settings in `ARROW_PBT_*` variables, fixed seeds, discards by reason, and a rerun command on failure.
 - `GeneratedArray`, `Mask` and `Indices`, the results of `array_of`, `mask` and `indices`, each with a `build` method.
+- `run::caught`, which turns a panic into a failure inside a property, so that a known-bug filter can match its message.
 - `val::check_rows`, the output check of every property. It accepts the generator's rows as they are.
 
 Two things wait until a property needs them. The [Parquet properties](coverage.md#parquet) and the Iceberg adapter need both:
