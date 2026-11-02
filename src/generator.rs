@@ -1659,29 +1659,153 @@ pub fn array_of(types: BoxedStrategy<GeneratorType>) -> BoxedStrategy<GeneratedA
 /// assert_eq!(g.build().len(), 10);
 /// ```
 pub fn array(ty: &GeneratorType, n: usize) -> BoxedStrategy<GeneratedArray> {
+    array_in(ty, n, ValueDomain::Arrow)
+}
+
+/// The values the generator draws for a type
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ValueDomain {
+    /// Every value arrow-rs accepts, including decimals past their declared
+    /// precision, which arrow-rs does not reject (apache/arrow-rs#10947)
+    #[default]
+    Arrow,
+    /// Only values within the logical type: decimals within their declared
+    /// precision, which Arrow C++'s full validation requires of every valid
+    /// slot. Garbage under a primitive's own null slot may lie outside it
+    Logical,
+}
+
+/// An array of type `ty` with `n` rows, whose values come from `domain`, in
+/// its rows and in the valid slots its layout fills
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt::generator::{GeneratorType, ValueDomain, array_in};
+/// use arrow_array::Array;
+/// use arrow_array::cast::AsArray;
+/// use arrow_array::types::Decimal32Type;
+/// use arrow_schema::DataType;
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let t = GeneratorType::try_from(&DataType::Decimal32(3, 1)).unwrap();
+/// for _ in 0..100 {
+///     let a = array_in(&t, 20, ValueDomain::Logical)
+///         .new_tree(&mut runner)
+///         .unwrap()
+///         .current()
+///         .build();
+///     assert!(a.as_primitive::<Decimal32Type>().validate_decimal_precision(3).is_ok());
+/// }
+/// ```
+pub fn array_in(
+    ty: &GeneratorType,
+    n: usize,
+    domain: ValueDomain,
+) -> BoxedStrategy<GeneratedArray> {
     let ty = ty.clone();
     (rows(&ty, n), seed())
         .prop_map(move |(rows, seed)| GeneratedArray {
+            rows: match domain {
+                ValueDomain::Arrow => rows,
+                ValueDomain::Logical => rows.into_iter().map(|v| fit_decimals(&ty, v)).collect(),
+            },
             ty: ty.clone(),
-            rows,
             seed,
+            domain,
         })
         .boxed()
 }
 
-/// An array as `array_of` generates it: a type, logical rows, and the seed
-/// that picks the physical layout
+/// An array as `array_of` generates it: a type, logical rows, the seed
+/// that picks the physical layout, and the domain of the values the layout
+/// adds
 #[derive(Clone, Debug)]
 pub struct GeneratedArray {
     pub ty: GeneratorType,
     pub rows: Vec<Val>,
     pub seed: u64,
+    pub domain: ValueDomain,
 }
 
 impl GeneratedArray {
-    /// The array, as [`build`] makes it
+    /// The array, as [`build`] makes it, with the values the layout adds
+    /// from `domain`
     pub fn build(&self) -> ArrayRef {
-        build(&self.ty, &self.rows, self.seed)
+        build_node(
+            &self.ty,
+            &self.rows,
+            &mut Layout::new(self.seed, self.domain),
+        )
+    }
+}
+
+/// `v`, a row of `t`, with each decimal value past its declared precision
+/// moved to the nearest limit. Map keys that become equal keep the first
+fn fit_decimals(t: &GeneratorType, v: Val) -> Val {
+    match (t, v) {
+        (_, Val::Null) => Val::Null,
+        (GeneratorType::NotNull(t), v) => fit_decimals(t, v),
+        (GeneratorType::Exact(e), v) => fit_decimals(&e.built_as, v),
+        (GeneratorType::Prim(dt), Val::Raw(b)) => Val::Raw(fit_precision(dt, b)),
+        (
+            GeneratorType::List(c)
+            | GeneratorType::LargeList(c)
+            | GeneratorType::ListView(c)
+            | GeneratorType::LargeListView(c)
+            | GeneratorType::Fsl(c, _),
+            Val::List(xs),
+        ) => Val::List(xs.into_iter().map(|x| fit_decimals(c, x)).collect()),
+        (GeneratorType::Map(k, v, _), Val::List(es)) => {
+            let mut keys: Vec<Val> = vec![];
+            Val::List(
+                es.into_iter()
+                    .filter_map(|e| {
+                        let Val::Struct(kv) = e else { return Some(e) };
+                        let [key, value] = <[Val; 2]>::try_from(kv).ok()?;
+                        let key = fit_decimals(k, key);
+                        if keys.contains(&key) {
+                            return None;
+                        }
+                        keys.push(key.clone());
+                        Some(Val::Struct(vec![key, fit_decimals(v, value)]))
+                    })
+                    .collect(),
+            )
+        }
+        (GeneratorType::Struct(fs), Val::Struct(xs)) => {
+            Val::Struct(fs.iter().zip(xs).map(|(f, x)| fit_decimals(f, x)).collect())
+        }
+        (GeneratorType::Dict(_, v) | GeneratorType::Ree(_, v), x) => fit_decimals(v, x),
+        (GeneratorType::Union(cs, _, ids), Val::Union(id, x)) => {
+            let x = match ids.iter().position(|i| *i == id) {
+                Some(i) => fit_decimals(&cs[i], *x),
+                None => *x,
+            };
+            Val::Union(id, Box::new(x))
+        }
+        (_, v) => v,
+    }
+}
+
+/// `b`, a value of the fixed-width type `dt`, moved to the nearest limit of
+/// `dt`'s precision if `dt` is a decimal and `b` lies past it
+fn fit_precision(dt: &DataType, b: Vec<u8>) -> Vec<u8> {
+    let decimal = matches!(
+        dt,
+        DataType::Decimal32(..)
+            | DataType::Decimal64(..)
+            | DataType::Decimal128(..)
+            | DataType::Decimal256(..)
+    );
+    let Some(d) = domain_of(dt).filter(|_| decimal) else {
+        return b;
+    };
+    let v = BigInt::from_signed_bytes_le(&b).clamp(d.lo, d.hi);
+    match int_val(&GeneratorType::Prim(dt.clone()), &v) {
+        Val::Raw(b) => b,
+        _ => unreachable!("int_val of a primitive type is raw"),
     }
 }
 
@@ -1937,13 +2061,16 @@ struct Layout {
     /// Where buffers sit in memory, a stream apart from `rng` so that it
     /// does not shift the other layout choices
     placement: Option<SmallRng>,
+    /// The values garbage in valid slots comes from
+    domain: ValueDomain,
 }
 
 impl Layout {
-    fn new(seed: u64) -> Self {
+    fn new(seed: u64, domain: ValueDomain) -> Self {
         Layout {
             rng: (seed != 0).then(|| SmallRng::seed_from_u64(seed)),
             placement: (seed != 0).then(|| SmallRng::seed_from_u64(seed ^ 0x9E37_79B9_7F4A_7C15)),
+            domain,
         }
     }
     fn chance(&mut self, p: f64) -> bool {
@@ -1965,13 +2092,20 @@ impl Layout {
             None => lo,
         }
     }
-    /// A random non-null value, used for padding rows and data under nulls
+    /// A random non-null value of the layout's domain, used for padding rows
+    /// and data under nulls
     fn garbage(&mut self, t: &GeneratorType) -> Val {
+        self.garbage_in(t, self.domain)
+    }
+
+    /// The same, with a primitive value from `domain`. Nested values come
+    /// from the layout's domain, since they fill valid slots of the children
+    fn garbage_in(&mut self, t: &GeneratorType, domain: ValueDomain) -> Val {
         if let GeneratorType::NotNull(t) = t {
-            return self.garbage(t);
+            return self.garbage_in(t, domain);
         }
         if let GeneratorType::Exact(e) = t {
-            return self.garbage(&e.built_as);
+            return self.garbage_in(&e.built_as, domain);
         }
         let Some(r) = self.rng.as_mut() else {
             return default_val(t);
@@ -2003,9 +2137,13 @@ impl Layout {
                     }
                     _ => None,
                 };
-                Val::Raw(match v {
+                let b = match v {
                     Some(v) => le(v, w),
                     None => (0..w).map(|_| r.random()).collect(),
+                };
+                Val::Raw(match domain {
+                    ValueDomain::Arrow => b,
+                    ValueDomain::Logical => fit_precision(dt, b),
                 })
             }
             GeneratorType::Utf8 | GeneratorType::LargeUtf8 | GeneratorType::Utf8View => {
@@ -2035,7 +2173,11 @@ impl Layout {
             GeneratorType::Struct(fs) => Val::Struct(fs.iter().map(|f| self.garbage(f)).collect()),
             GeneratorType::Dict(_, v) | GeneratorType::Ree(_, v) => {
                 let p = pool(v);
-                p[r.random_range(0..p.len())].clone()
+                let x = p[r.random_range(0..p.len())].clone();
+                match self.domain {
+                    ValueDomain::Arrow => x,
+                    ValueDomain::Logical => fit_decimals(v, x),
+                }
             }
             GeneratorType::Union(cs, _, ids) => {
                 let i = self.range(0, cs.len() - 1);
@@ -2086,7 +2228,7 @@ pub(crate) fn default_val(t: &GeneratorType) -> Val {
 /// assert_eq!(vals(a.as_ref()), rows);
 /// ```
 pub fn build(t: &GeneratorType, rows: &[Val], seed: u64) -> ArrayRef {
-    build_node(t, rows, &mut Layout::new(seed))
+    build_node(t, rows, &mut Layout::new(seed, ValueDomain::Arrow))
 }
 
 /// How many arrays `misalign_by_8` produced, for the coverage report
@@ -2223,7 +2365,10 @@ fn under_nulls(t: &GeneratorType, rows: &[Val], l: &mut Layout) -> (Vec<Val>, Op
         .iter()
         .map(|v| match v {
             Val::Null if garbage && all_inline => inline(l.garbage(t)),
-            Val::Null if garbage => l.garbage(t),
+            // A null slot of a primitive holds no value, so its garbage may lie
+            // outside the domain. A nested type's garbage fills valid slots of
+            // its children, so it stays within it
+            Val::Null if garbage => l.garbage_in(t, ValueDomain::Arrow),
             Val::Null => default_val(t),
             v => v.clone(),
         })

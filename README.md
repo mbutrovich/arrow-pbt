@@ -4,19 +4,19 @@
 
 Property-based tests for [arrow-rs](https://github.com/apache/arrow-rs) and the projects built on it. One generator produces valid Arrow arrays of every type in every physical layout the Arrow format allows. An independent oracle reads any array into plain values. Short properties check the compute kernels against both. A failing case shrinks to a small input and reports the seed that reproduces it.
 
-The properties have found 39 bugs: 38 in arrow-rs `main` and one in atoi, which arrow-cast uses to parse integers. Each was reported with a reproduction or linked to an existing issue. 23 of the 39 are fixed. [docs/known-bugs.md](docs/known-bugs.md) lists them.
+The properties have found 42 bugs: 38 in arrow-rs `main`, one in atoi, which arrow-cast uses to parse integers, and three in DataFusion `main`. Each was reported with a reproduction or linked to an existing issue. 23 of the 42 are fixed. [docs/known-bugs.md](docs/known-bugs.md) lists them.
 
 arrow-pbt is an independent project. It is not part of Apache Arrow, and the Apache Software Foundation does not endorse it.
 
 ## Who it is for
 
-- **arrow-rs contributors** can run the properties against a branch before merging a risky change, such as a new kernel or a rewrite of a fast path, and against `main` every night. [Choosing the arrow-rs under test](#choosing-the-arrow-rs-under-test) says how.
+- **arrow-rs contributors** can run the properties against a branch before merging a risky change, such as a new kernel or a rewrite of a fast path, and against `main` every night. [Choosing the commits under test](#choosing-the-commits-under-test) says how.
 - **Projects built on arrow-rs**, such as DataFusion, can test their own functions on generated arrays through an adapter crate. [docs/design.md](docs/design.md#downstream-adapters) describes adapters.
 - **Contributors to arrow-pbt** add properties and adapters. [CONTRIBUTING.md](CONTRIBUTING.md) says how.
 
 ## Getting started
 
-You need Rust 1.88 or later for arrow-rs's properties, and 1.95 or later for the whole workspace, which builds the DataFusion adapter. `Cargo.toml` names the arrow-rs commit to test, so you need no checkout of arrow-rs:
+You need Rust 1.88 or later for arrow-rs's properties, and 1.95 or later for the whole workspace, which builds the DataFusion adapter. `Cargo.toml` names the arrow-rs and DataFusion commits to test, so you need no checkout of either:
 
 ```sh
 git clone https://github.com/mbutrovich/arrow-pbt.git
@@ -39,22 +39,23 @@ rerun with: ARROW_PBT_SEEDS=1 ARROW_PBT_CASES=256 ARROW_PBT_NO_KNOWN=1 cargo tes
 
 The same seed and case count always give the same case. [When a property fails](docs/workflow.md#when-a-property-fails) says how to decide whose bug it is and how to report it.
 
-## Choosing the arrow-rs under test
+## Choosing the commits under test
 
-`Cargo.toml` depends on `arrow-* = "60"`, and its `[patch.crates-io]` section replaces those crates with one commit of arrow-rs `main`. The patch covers every crate in the workspace, including the arrow crates DataFusion depends on, so the workspace builds one arrow.
+`Cargo.toml` depends on `arrow-* = "60"` and on DataFusion's crates at the version on DataFusion `main`. Its `[patch.crates-io]` section replaces both with one commit of each project's `main`. The arrow-rs patch covers every crate in the workspace, including the arrow crates DataFusion depends on, so the workspace builds one arrow. The DataFusion commit must build on that arrow-rs commit.
 
-To test a branch, a local checkout, or the latest `main`, override the patch in a `.cargo/config.toml`, which is not committed. Cargo uses the config's patch over the one in `Cargo.toml`:
+To test a branch, a local checkout, or the latest `main` of either project, override its patch in a `.cargo/config.toml`, which is not committed. Cargo uses the config's patch over the one in `Cargo.toml`:
 
 ```sh
 cp .cargo/config.toml.example .cargo/config.toml
-# edit the paths in .cargo/config.toml to point at the arrow-rs checkout
+# edit the paths in .cargo/config.toml to point at the checkouts, and delete
+# the entries of a project you don't override
 ```
 
 To test a branch on GitHub without a checkout, give each crate the git source that the example's comment shows instead of a path.
 
-The override rewrites `Cargo.lock` to the override's source. Don't commit that change, and delete `.cargo/config.toml` to go back to the pinned commit.
+The override rewrites `Cargo.lock` to the override's source. Don't commit that change, and delete `.cargo/config.toml` to go back to the pinned commits.
 
-The arrow-rs version must match the requirement in `Cargo.toml`. Otherwise Cargo warns that the patch was not used and builds the crates.io release instead. [docs/workflow.md](docs/workflow.md#moving-the-arrow-rs-commit) says how to move the commit.
+Each project's version must match its requirement in `Cargo.toml`. For arrow-rs, Cargo otherwise warns that the patch was not used and builds the crates.io release instead. DataFusion's requirement is exact, because crates.io has DataFusion releases of the same major version on an older arrow, so a mismatch is a resolution error instead of a silent fallback to them. [docs/workflow.md](docs/workflow.md#moving-the-commits) says how to move the commits.
 
 ## Running
 
@@ -125,7 +126,7 @@ At the average cost above, every property at the nightly size takes about 14 hou
 | `tests/properties.rs`                 | One `#[test]` per property                                                                                                                                                                                 |
 | `tests/cli.rs`                        | Tests of the binary's `list` and `help` commands                                                                                                                                                           |
 | `tests/generator.rs`                  | Tests of the generator's conversion from a `DataType` or `Field`, and of where it places values buffers                                                                                                    |
-| `arrow-pbt-datafusion/`               | The DataFusion adapter (`src/lib.rs`) and the broadcast law for a few scalar functions (`tests/functions.rs`)                                                                                              |
+| `arrow-pbt-datafusion/`               | The DataFusion adapter (`src/lib.rs`) and its laws for DataFusion's scalar functions (`tests/functions.rs`)                                                                                                |
 | `docs/`                               | Design, workflow, known bugs, and coverage                                                                                                                                                                 |
 | `tools/mutation/`                     | Mutation testing scripts and the arrow-select results                                                                                                                                                      |
 

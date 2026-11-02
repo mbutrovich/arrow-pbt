@@ -20,11 +20,20 @@ arrow-row = "60"
 arrow-schema = "60"
 arrow-select = "60"
 arrow-string = "60"
+# DataFusion, for the DataFusion adapter. `[patch.crates-io]` below replaces
+# these with a commit of DataFusion `main` (see README.md). The requirement is
+# exact, and must match the version in that commit, because crates.io has
+# DataFusion releases of the same major version on an older arrow. With a
+# looser one, a patch Cargo cannot use falls back to them with only a warning
+datafusion-common = "=55.1.0"
+datafusion-expr = "=55.1.0"
+datafusion-functions = "=55.1.0"
 # Same declaration as arrow-rs/parquet/Cargo.toml
 proptest = { version = "1.0", default-features = false, features = ["std"] }
 
 # The arrow-rs commit under test, for every crate in the workspace, including
-# the arrow crates DataFusion depends on. `.cargo/config.toml` can override it
+# the arrow crates DataFusion depends on, and the DataFusion commit under test,
+# which must build on that arrow-rs. `.cargo/config.toml` can override both
 [patch.crates-io]
 arrow = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
 arrow-arith = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
@@ -40,6 +49,9 @@ arrow-row = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d
 arrow-schema = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
 arrow-select = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
 arrow-string = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e924d9c0faceef0027e3766b615c98" }
+datafusion-common = { git = "https://github.com/apache/datafusion", rev = "926901f9001977e85df617b96328801b42f6af4a" }
+datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "926901f9001977e85df617b96328801b42f6af4a" }
+datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "926901f9001977e85df617b96328801b42f6af4a" }
 
 [package]
 name = "arrow-pbt"

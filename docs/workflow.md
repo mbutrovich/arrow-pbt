@@ -2,27 +2,31 @@
 
 ## Running regularly
 
-A nightly run against arrow-rs `main` finds bugs within a day of the merge that introduced them. Point `.cargo/config.toml` at an up-to-date checkout and run many cases. A seed taken from the date explores new cases each night and is easy to replay:
+A nightly run against arrow-rs `main` and DataFusion `main` finds bugs within a day of the merge that introduced them. Point `.cargo/config.toml` at up-to-date checkouts of both and run many cases. A seed taken from the date explores new cases each night and is easy to replay:
 
 ```sh
 git -C /path/to/arrow-rs pull
+git -C /path/to/datafusion pull
 ARROW_PBT_REASONS=1 cargo run -q -- run all $(date +%Y%m%d) 100000 > nightly-$(date +%F).tsv
+ARROW_PBT_SEEDS=$(date +%Y%m%d) ARROW_PBT_CASES=100000 cargo test -p arrow-pbt-datafusion
 ```
+
+The binary runs arrow-rs's properties, and `cargo test` runs an adapter's. When DataFusion `main` does not build on arrow-rs `main`, delete DataFusion's entries from `.cargo/config.toml` to keep it on its pinned commit, or skip the second run.
 
 On macOS, prefix a long run with `caffeinate -i`, so that idle sleep does not pause it.
 
-Before merging a risky change to arrow-rs, run the properties for the touched crate against the branch with a large case count. For example, a change to decimal division would run `arith,cast,fixed_point,decimal_format`.
+Before merging a risky change to arrow-rs, run the properties for the touched crate against the branch with a large case count. For example, a change to decimal division would run `arith,cast,fixed_point,decimal_format`. For a change to a DataFusion function, point `.cargo/config.toml` at the branch and run that function's test with `ARROW_PBT_CASES` in the thousands, such as `cargo test -p arrow-pbt-datafusion lpad`.
 
 ## When a property fails
 
 The failure reports the property, the seed, the shrunk input, and a rerun command. Steps:
 
 1. **Rerun it.** `ARROW_PBT_FULL=1` prints the input without truncation, and `ARROW_PBT_PANICS=1` keeps panic messages. The same seed and case count always give the same case.
-2. **Decide whose bug it is.** The property can be wrong, or the generator, or arrow-rs. Read the Arrow format specification and the kernel's rustdoc for the behavior in question. If the specification and the docs are silent, look for an arrow-rs issue or pull request where a maintainer settled it. A settled position is not a bug. Encode it in the property as the expected behavior, with a comment that cites the issue. Examples in the code are integer to `Date64` casts keeping out-of-range values ([apache/arrow-rs#5288](https://github.com/apache/arrow-rs/issues/5288)) and `T::Native::MIN` as an unsupported decimal division operand ([apache/arrow-rs#10911](https://github.com/apache/arrow-rs/issues/10911)).
-3. **Check upstream `main`.** The commit in `Cargo.toml` or the checkout under test may be older. Point `.cargo/config.toml` at current `main` and rerun.
-4. **Search for an existing issue.** `gh search issues --repo apache/arrow-rs "<keywords>"` and `gh search prs` with the function name. A related closed issue often explains the history.
-5. **Reduce it by hand.** The shrunk input is usually still large: one shrunk case was a 1,000-row `Decimal128(38, 38)` array. Write a standalone reproduction, with the output of each call in a comment, as a scratch program outside this repository. It goes into the issue, and the fix's pull request turns it into a regression test in arrow-rs. Aim for one or two rows and the simplest type that shows the bug. This is most of the work per bug.
-6. **Write the issue.** Use the arrow-rs bug template: what happens, the reproduction, the expected behavior with its source (the specification, the rustdoc, or a maintainer's comment), and the code at fault, linked with a permalink that includes a commit SHA. Ask a question where the intended behavior is unclear. The reproduction becomes the regression test in the fix's pull request.
+2. **Decide whose bug it is.** The property can be wrong, or the generator, or the project under test: arrow-rs, or the project an adapter tests. Read the Arrow format specification and the kernel's rustdoc, or the function's documentation, for the behavior in question. If they are silent, look for an issue or pull request in that project where a maintainer settled it. A settled position is not a bug. Encode it in the property as the expected behavior, with a comment that cites the issue. Examples in the code are integer to `Date64` casts keeping out-of-range values ([apache/arrow-rs#5288](https://github.com/apache/arrow-rs/issues/5288)) and `T::Native::MIN` as an unsupported decimal division operand ([apache/arrow-rs#10911](https://github.com/apache/arrow-rs/issues/10911)).
+3. **Check upstream `main`.** The commits in `Cargo.toml` or the checkouts under test may be older. Point `.cargo/config.toml` at current `main` and rerun.
+4. **Search for an existing issue.** `gh search issues --repo apache/arrow-rs "<keywords>"`, or `--repo apache/datafusion` for a DataFusion function, and `gh search prs` with the function name. A related closed issue often explains the history.
+5. **Reduce it by hand.** The shrunk input is usually still large: one shrunk case was a 1,000-row `Decimal128(38, 38)` array. Write a standalone reproduction, with the output of each call in a comment, as a scratch program outside this repository. It goes into the issue, and the fix's pull request turns it into a regression test in the project. Aim for one or two rows and the simplest type that shows the bug. This is most of the work per bug.
+6. **Write the issue.** Use the project's bug template: what happens, the reproduction, the expected behavior with its source (the specification, the rustdoc, or a maintainer's comment), and the code at fault, linked with a permalink that includes a commit SHA. Ask a question where the intended behavior is unclear. The reproduction becomes the regression test in the fix's pull request.
 
 ## Keeping the bug from hiding others
 
@@ -65,15 +69,16 @@ A fixed bug loses its filter and keeps its row in [known-bugs.md](known-bugs.md)
 
 `ARROW_PBT_NO_KNOWN=1` turns every filter into a failure. A property stops at its first failure, so it cannot show one bug fixed while another in the same property is open.
 
-## Moving the arrow-rs commit
+## Moving the commits
 
-The `[patch.crates-io]` section of `Cargo.toml` names the arrow-rs commit a fresh clone tests. Move it when a fix lands, so that its filter can go, or when the properties need a new entry point:
+The `[patch.crates-io]` section of `Cargo.toml` names the arrow-rs and DataFusion commits a fresh clone tests. Move one when a fix lands, so that its filter can go, or when the properties need a new entry point:
 
-1. Set the new commit as `rev` in every entry of the section.
-2. If the commit changes arrow-rs's major version, update the `arrow-*` requirement in `[workspace.dependencies]` to match. Otherwise Cargo warns that the patch was not used and builds the crates.io release.
-3. If `arrow-pbt-datafusion` no longer builds, move its DataFusion `rev` to a commit that builds on the new arrow-rs.
-4. Run the checks in [CONTRIBUTING.md](../CONTRIBUTING.md#checks-before-a-pull-request).
-5. List the new entry points and update [coverage.md](coverage.md), as step 1 of [When arrow-rs changes](#when-arrow-rs-changes) says.
+1. Set the new commit as `rev` in every entry of that project in the section.
+2. If the arrow-rs commit changes arrow-rs's major version, update the `arrow-*` requirement in `[workspace.dependencies]` to match. Otherwise Cargo warns that the patch was not used and builds the crates.io release. If the DataFusion commit changes DataFusion's version, update the exact `datafusion-*` requirement to that version. Otherwise Cargo fails to resolve.
+3. If Cargo then cannot select a version of a dependency that the new commit needs, such as `libc`, update that dependency alone with `cargo update -p <name>`.
+4. The DataFusion commit must build on the arrow-rs commit. If `arrow-pbt-datafusion` no longer builds after moving arrow-rs, move DataFusion to a commit that builds on it, such as one on its arrow upgrade branch.
+5. Run the checks in [CONTRIBUTING.md](../CONTRIBUTING.md#checks-before-a-pull-request).
+6. For arrow-rs, list the new entry points and update [coverage.md](coverage.md), as step 1 of [When arrow-rs changes](#when-arrow-rs-changes) says.
 
 ## Checking a refactor
 
@@ -97,13 +102,13 @@ For arrow-rs:
 4. Break the oracle on purpose a few ways and confirm the property fails each time. Build each broken copy into its own binary and compare the binaries' hashes, because Cargo reuses a build when the copied sources keep their old modification times.
 5. Run it with a few thousand cases and read its discards by reason.
 
-For a DataFusion scalar function, add a `#[test]` to `arrow-pbt-datafusion/tests/functions.rs` that runs `check_broadcast` through `run::check` on cases from `calls` with the function's signatures, and run it with `ARROW_PBT_CASES` in the thousands.
+For a DataFusion scalar function, add a line to `law_tests!` in `arrow-pbt-datafusion/tests/functions.rs` with the function and its signatures, the argument types it accepts after coercion. The test first checks each signature with DataFusion's `fields_with_udf`, which leaves a signature unchanged only if the planner would pass it as it is, then runs `check_broadcast` and `check_row_by_row` through `run::check`. Run it with `ARROW_PBT_CASES` in the thousands.
 
 ## Adding an adapter
 
 An adapter tests a project built on arrow-rs, through the four parts that [Downstream adapters](design.md#downstream-adapters) describes:
 
-1. Create a member crate named `arrow-pbt-<project>`, and add it to `members` in the root `Cargo.toml`. Depend on the project by a git rev of its `main`, or by a crates.io version once a release builds on the arrow-rs version the workspace pins. Never depend on a local checkout. The workspace's `[patch.crates-io]` already puts the project's arrow crates on the pinned arrow-rs.
+1. Create a member crate named `arrow-pbt-<project>`, and add it to `members` in the root `Cargo.toml`. Add the project's crates to `[workspace.dependencies]` at the version on its `main`, and put a commit of its `main` in `[patch.crates-io]`, as for DataFusion. Make the requirement exact when crates.io has releases of that version line on an older arrow. Once a release builds on the arrow-rs version the workspace pins, depend on the release and drop the patch. Never depend on a local checkout. The workspace's `[patch.crates-io]` already puts the project's arrow crates on the pinned arrow-rs, and `.cargo/config.toml.example` should gain the project's entries.
 2. Use only the project's public API, so the adapter needs no change to the project.
 3. Write the types the project accepts, the conversions to its own types, the case strategies, and a harness function for each law, in the crate's `src/lib.rs`. Each public item gets a doctest.
 4. Write each property as a `#[test]` in the crate's `tests/` that runs a harness function through `run::check`. Run a harness function on an entry point broken on purpose, and check that its failure says why, as `arrow-pbt-datafusion/tests/functions.rs` does.

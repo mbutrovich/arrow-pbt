@@ -8,18 +8,17 @@ repository.workspace = true
 description = "Property-based tests for DataFusion, built on arrow-pbt"
 publish = false
 
-# DataFusion `main`, the only DataFusion on the arrow major version under
-# test. Move to a crates.io release once one is on that version
 [dependencies]
 arrow-array.workspace = true
 arrow-pbt = { path = ".." }
 arrow-schema.workspace = true
-datafusion-common = { git = "https://github.com/apache/datafusion", rev = "1da3cf049fa1a7a708acc2c29eba4f2e9dece8db" }
-datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "1da3cf049fa1a7a708acc2c29eba4f2e9dece8db" }
+datafusion-common.workspace = true
+datafusion-expr.workspace = true
 proptest.workspace = true
 
 [dev-dependencies]
-datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "1da3cf049fa1a7a708acc2c29eba4f2e9dece8db" }
+arrow-buffer.workspace = true
+datafusion-functions.workspace = true
 
 [lints]
 workspace = true

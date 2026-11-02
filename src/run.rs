@@ -229,9 +229,17 @@ pub(crate) fn panic_message(p: &(dyn Any + Send)) -> String {
 
 /// Runs `body`, turning a panic into a failure with its message, so a
 /// known-bug filter can match it
-pub(crate) fn caught(
-    body: impl FnOnce() -> Result<(), TestCaseError>,
-) -> Result<(), TestCaseError> {
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt::run::caught;
+/// use proptest::test_runner::TestCaseError;
+/// let r = caught(|| panic!("index out of bounds"));
+/// let Err(TestCaseError::Fail(m)) = r else { unreachable!() };
+/// assert_eq!(m.to_string(), "panic: index out of bounds");
+/// ```
+pub fn caught(body: impl FnOnce() -> Result<(), TestCaseError>) -> Result<(), TestCaseError> {
     catch_unwind(AssertUnwindSafe(body)).unwrap_or_else(|p| {
         Err(TestCaseError::fail(format!(
             "panic: {}",

@@ -52,6 +52,7 @@ pub fn take_in_bounds() -> BoxedStrategy<(ArrayRef, Int32Array)> {
                  ty: t,
                  rows: r,
                  seed: s,
+                 ..
              }| (Just(build(&t, &r, s)), indices(r.len())),
         )
         .prop_map(|(a, i)| (a, i.build()))
@@ -65,6 +66,7 @@ pub fn filter() -> BoxedStrategy<(ArrayRef, BooleanArray)> {
                  ty: t,
                  rows: r,
                  seed: s,
+                 ..
              }| (Just(build(&t, &r, s)), mask(r.len())),
         )
         .prop_map(|(a, m)| (a, m.build()))
@@ -230,6 +232,7 @@ pub fn slice() -> BoxedStrategy<(ArrayRef, usize, usize)> {
                  ty: t,
                  rows: r,
                  seed: s,
+                 ..
              }| {
                 let n = r.len();
                 (Just(build(&t, &r, s)), 0..=n)
@@ -246,6 +249,7 @@ pub fn eq() -> BoxedStrategy<(ArrayRef, ArrayRef)> {
                  ty: t,
                  rows: r1,
                  seed: s1,
+                 ..
              }| {
                 let n = r1.len();
                 let t2 = t.clone();
@@ -307,6 +311,7 @@ pub fn cmp() -> BoxedStrategy<(ArrayRef, ArrayRef, bool)> {
                  ty: t,
                  rows: r1,
                  seed: s1,
+                 ..
              }| {
                 let n = r1.len();
                 let other = prop_oneof![1 => Just(r1.clone()), 1 => rows(&t, n)];
@@ -325,6 +330,7 @@ pub fn sort() -> BoxedStrategy<(ArrayRef, bool, bool, Option<usize>)> {
                  ty: t,
                  rows: r,
                  seed: s,
+                 ..
              }| {
                 let n = r.len();
                 (
@@ -481,6 +487,7 @@ pub fn take() -> BoxedStrategy<(ArrayRef, Int32Array)> {
                  ty: t,
                  rows: r,
                  seed: s,
+                 ..
              }| { (Just(build(&t, &r, s)), take_indices(r.len())) },
         )
         .boxed()

@@ -4,14 +4,20 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow_array::Array;
-use arrow_data::{BufferSpec, layout};
-use arrow_pbt::generator::{GeneratorType, all_types, array, build, len, rows, seed};
+use arrow_array::cast::AsArray;
+use arrow_array::types::{Decimal32Type, Decimal64Type, Decimal128Type, Decimal256Type};
+use arrow_array::{Array, make_array};
+use arrow_data::{ArrayData, BufferSpec, layout};
+use arrow_pbt::generator::{
+    GeneratedArray, GeneratorType, ValueDomain, all_types, array, array_in, build, len, rows, seed,
+};
+use arrow_pbt::run::check;
 use arrow_pbt::val::{Val, check_rows};
 use arrow_schema::{
-    DataType, Field, FieldRef, Fields, IntervalUnit, TimeUnit, UnionFields, UnionMode,
+    ArrowError, DataType, Field, FieldRef, Fields, IntervalUnit, TimeUnit, UnionFields, UnionMode,
 };
 use proptest::prelude::*;
+use proptest::sample::select;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::{TestCaseError, TestRunner};
 
@@ -426,4 +432,101 @@ fn values_at_the_minimum_alignment() {
             "{dt}: no values below {width}-byte alignment"
         );
     }
+}
+
+/// Each value in a valid decimal slot of `d`, or of any array inside it,
+/// fits the declared precision, as Arrow C++'s full validation requires
+fn within_precision(d: &ArrayData) -> Result<(), ArrowError> {
+    let a = make_array(d.clone());
+    match d.data_type() {
+        DataType::Decimal32(p, _) => a
+            .as_primitive::<Decimal32Type>()
+            .validate_decimal_precision(*p)?,
+        DataType::Decimal64(p, _) => a
+            .as_primitive::<Decimal64Type>()
+            .validate_decimal_precision(*p)?,
+        DataType::Decimal128(p, _) => a
+            .as_primitive::<Decimal128Type>()
+            .validate_decimal_precision(*p)?,
+        DataType::Decimal256(p, _) => a
+            .as_primitive::<Decimal256Type>()
+            .validate_decimal_precision(*p)?,
+        _ => {}
+    }
+    d.child_data().iter().try_for_each(within_precision)
+}
+
+/// Decimal types on their own, and inside the types whose layouts fill
+/// valid slots that hold no row: list children, dictionary values, run-end
+/// encoded values, struct children, and union children
+fn decimal_types() -> BoxedStrategy<GeneratorType> {
+    let d = DataType::Decimal128(10, 2);
+    let field = |name: &str, dt: DataType| Field::new(name, dt, true);
+    let union = |mode| {
+        DataType::Union(
+            UnionFields::try_new(
+                [0, 1],
+                [
+                    field("a", d.clone()),
+                    field("b", DataType::Decimal256(20, 0)),
+                ],
+            )
+            .unwrap(),
+            mode,
+        )
+    };
+    let types = [
+        DataType::Decimal32(9, 2),
+        DataType::Decimal64(18, 4),
+        DataType::Decimal128(38, 10),
+        DataType::Decimal256(20, 0),
+        DataType::List(Arc::new(field("item", d.clone()))),
+        DataType::FixedSizeList(Arc::new(field("item", DataType::Decimal32(5, 0))), 2),
+        DataType::Dictionary(
+            Box::new(DataType::Int8),
+            Box::new(DataType::Decimal64(10, 3)),
+        ),
+        DataType::RunEndEncoded(
+            Arc::new(Field::new("run_ends", DataType::Int32, false)),
+            Arc::new(field("values", d.clone())),
+        ),
+        DataType::Struct(Fields::from(vec![field("a", d.clone())])),
+        union(UnionMode::Sparse),
+        union(UnionMode::Dense),
+    ];
+    select(
+        types
+            .iter()
+            .map(|dt| GeneratorType::try_from(dt).unwrap_or_else(|e| panic!("{dt}: {e}")))
+            .collect::<Vec<_>>(),
+    )
+    .boxed()
+}
+
+fn arrays_in(domain: ValueDomain) -> BoxedStrategy<GeneratedArray> {
+    (prop_oneof![decimal_types(), all_types()], len())
+        .prop_flat_map(move |(t, n)| array_in(&t, n, domain))
+        .boxed()
+}
+
+/// With `ValueDomain::Logical`, every valid decimal slot fits its precision,
+/// in the rows and in the slots the layout fills
+#[test]
+fn logical_decimals_fit_their_precision() {
+    check("logical decimals", arrays_in(ValueDomain::Logical), |g| {
+        within_precision(&g.build().to_data()).map_err(|e| TestCaseError::fail(e.to_string()))
+    });
+}
+
+/// The default domain draws decimals past their precision, so the check
+/// above can fail
+#[test]
+fn arrow_decimals_can_exceed_their_precision() {
+    let mut runner = TestRunner::deterministic();
+    let strategy = arrays_in(ValueDomain::Arrow);
+    let past = (0..256).any(|_| {
+        let g = strategy.new_tree(&mut runner).unwrap().current();
+        within_precision(&g.build().to_data()).is_err()
+    });
+    assert!(past, "no decimal past its precision in 256 arrays");
 }
