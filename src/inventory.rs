@@ -126,6 +126,12 @@ impl Inputs for (ArrayRef, DataType, bool) {
     }
 }
 
+impl Inputs for (ArrayRef, u8, u8, i8) {
+    fn arrays(&self) -> Vec<ArrayRef> {
+        vec![self.0.clone()]
+    }
+}
+
 impl Inputs for ArrayRef {
     fn arrays(&self) -> Vec<ArrayRef> {
         vec![self.clone()]

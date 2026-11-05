@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use arrow_array::{Array, ArrayRef, BooleanArray, Int32Array};
+use arrow_array::{Array, ArrayRef, BooleanArray, Int32Array, make_array};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -12,8 +12,8 @@ use proptest::sample::select;
 use crate::batches::{CoalesceCase, InterleaveBatches};
 use crate::generator::value_types;
 use crate::generator::{
-    GeneratedArray, GeneratorType, ValueDomain, all_types, array_of, batch, build, indices, len,
-    mask, rows, schemas, seed,
+    GeneratedArray, GeneratorType, ValueDomain, all_types, array, array_of, batch, build, indices,
+    len, mask, rows, schemas, seed,
 };
 use crate::numeric::FixedPointCase;
 use crate::order::SortCase;
@@ -1086,6 +1086,54 @@ pub fn fixed_point() -> BoxedStrategy<FixedPointCase> {
             )
         })
         .prop_map(|(tl, tr, rl, rr, sl, sr, req)| (build(&tl, &rl, sl), build(&tr, &rr, sr), req))
+        .boxed()
+}
+
+/// A decimal array of every width, of a precision and scale drawn for it,
+/// negative scales included, holding values of the widest type of that width
+/// so that some lie past the precision. Then a precision to check the values
+/// against, and a precision and scale to set, each past its limits too
+pub fn decimal_precision() -> BoxedStrategy<(ArrayRef, u8, u8, i8)> {
+    use DataType as D;
+    let widths = vec![
+        (D::Decimal32(9, 0), 9u8),
+        (D::Decimal64(18, 0), 18),
+        (D::Decimal128(38, 0), 38),
+        (D::Decimal256(76, 0), 76),
+    ];
+    (select(widths), len())
+        .prop_flat_map(|((wide, max), n)| {
+            let p0 = prop_oneof![select(vec![1, max]), 1..=max];
+            let rows = array(&GeneratorType::Prim(wide.clone()), n, ValueDomain::Arrow);
+            (Just(wide), Just(max), p0, rows)
+        })
+        .prop_flat_map(|(wide, max, p0, g)| {
+            let m = max as i8;
+            let top = p0 as i8;
+            // The Arrow format bounds a scale only by its `int` type, and
+            // arrow-rs only from above
+            let s0 = prop_oneof![select(vec![0, -1, top, -m, i8::MIN]), -m..=top];
+            let p = prop_oneof![select(vec![1, max, p0]), 1..=max];
+            let p1 = prop_oneof![select(vec![0, 1, max, max + 1]), 0..=max + 1];
+            let s1 = prop_oneof![select(vec![i8::MIN, -m, -1, 0, m, m + 1]), any::<i8>()];
+            (Just(wide), Just(p0), s0, Just(g), p, p1, s1)
+        })
+        .prop_map(|(wide, p0, s0, g, p, p1, s1)| {
+            let dt = match wide {
+                D::Decimal32(..) => D::Decimal32(p0, s0),
+                D::Decimal64(..) => D::Decimal64(p0, s0),
+                D::Decimal128(..) => D::Decimal128(p0, s0),
+                _ => D::Decimal256(p0, s0),
+            };
+            // Only the type changes, which keeps the layout `build` chose
+            let data = g.build().to_data().into_builder().data_type(dt).build();
+            (
+                make_array(data.expect("a decimal of the same width")),
+                p,
+                p1,
+                s1,
+            )
+        })
         .boxed()
 }
 

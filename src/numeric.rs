@@ -13,16 +13,17 @@ use arrow_buffer::{ArrowNativeType, NullBuffer, ScalarBuffer};
 use arrow_schema::{ArrowError, DataType};
 use num_bigint::BigInt;
 use num_integer::Integer;
-use num_traits::{ToPrimitive, WrappingShl, WrappingShr};
+use num_traits::{Signed, ToPrimitive, WrappingShl, WrappingShr};
 use proptest::test_runner::TestCaseError;
 use std::cell::Cell;
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
+use crate::known::{known, tolerated};
 use crate::props::R;
 use crate::props::decimal_scale;
 use crate::props::interval_fields;
 use crate::props::round_half_away;
-use crate::props::{as_val, big, check_in, fail, fits, wrap};
+use crate::props::{as_val, big, check_in, fail, fits, pow10, wrap};
 use crate::run::caught;
 use crate::val::check_rows;
 use crate::val::{Val, val_at, vals};
@@ -1011,6 +1012,96 @@ fn decimal_string(n: &BigInt, scale: i32) -> String {
     let padded = format!("{digits:0>width$}", width = s + 1);
     let (whole, fraction) = padded.split_at(padded.len() - s);
     format!("{sign}{whole}.{fraction}")
+}
+
+/// `PrimitiveArray`'s decimal precision methods against exact integers:
+/// `validate_decimal_precision` and `null_if_overflow_precision` with
+/// precision `p`, and `with_precision_and_scale` with `p1` and `s1`
+pub fn decimal_precision_prop((a, p, p1, s1): (ArrayRef, u8, u8, i8)) -> R {
+    check_in(a.as_ref())?;
+    match a.data_type() {
+        DataType::Decimal32(..) => decimal_precision::<Decimal32Type>(&a, p, p1, s1),
+        DataType::Decimal64(..) => decimal_precision::<Decimal64Type>(&a, p, p1, s1),
+        DataType::Decimal128(..) => decimal_precision::<Decimal128Type>(&a, p, p1, s1),
+        _ => decimal_precision::<Decimal256Type>(&a, p, p1, s1),
+    }
+}
+
+fn decimal_precision<T: DecimalType>(a: &ArrayRef, p: u8, p1: u8, s1: i8) -> R {
+    let dt = a.data_type().clone();
+    let s0 = decimal_scale(&dt).unwrap();
+    let v = vals(a.as_ref());
+    let limit = pow10(i32::from(p));
+    let fits_p = |x: &Val| *x != Val::Null && big(&dt, x).abs() < limit;
+    let arr = a.as_primitive::<T>();
+    // A known bug is discarded after the rest of the case is checked
+    let mut known_bug = None;
+
+    // A scale above the precision is an invalid type, as
+    // `validate_decimal_precision_and_scale` documents
+    let valid = s0 <= i32::from(p) && v.iter().all(|x| *x == Val::Null || fits_p(x));
+    match arr.validate_decimal_precision(p) {
+        // Its check of the precision against the scale casts a negative
+        // scale to u8. Found by this harness on main at 9ffd63d528
+        // (apache/arrow-rs#12095)
+        Err(e) if s0 < 0 && e.to_string().contains("is less than scale -") => {
+            known_bug = Some(
+                "known: validate_decimal_precision rejects every negative scale (apache/arrow-rs#12095)",
+            );
+        }
+        r if r.is_ok() != valid => {
+            return Err(fail(format!(
+                "validate_decimal_precision({p}) on {dt}: {r:?}, expected {}",
+                if valid { "Ok" } else { "an error" }
+            )));
+        }
+        _ => {}
+    }
+
+    let out = arr.null_if_overflow_precision(p);
+    let kept: Vec<Val> = v
+        .iter()
+        .map(|x| if fits_p(x) { x.clone() } else { Val::Null })
+        .collect();
+    check_rows(&out, out.data_type(), &kept)
+        .map_err(|e| fail(format!("null_if_overflow_precision({p}) on {dt}: {e:?}")))?;
+    if out.data_type() != &dt {
+        // It returns the type's default precision and scale, which changes
+        // every value's meaning. It does so on every input, so discarding
+        // would discard every case (apache/arrow-rs#11300)
+        tolerated(
+            "known: null_if_overflow_precision resets the precision and scale (apache/arrow-rs#11300)",
+        )?;
+    }
+
+    // The errors `validate_decimal_precision_and_scale` documents
+    let valid =
+        p1 != 0 && p1 <= T::MAX_PRECISION && s1 <= T::MAX_SCALE && i32::from(s1) <= i32::from(p1);
+    match (arr.clone().with_precision_and_scale(p1, s1), valid) {
+        (Ok(b), true) => {
+            let want = (T::TYPE_CONSTRUCTOR)(p1, s1);
+            if b.data_type() != &want {
+                return Err(fail(format!(
+                    "with_precision_and_scale({p1}, {s1}) on {dt} returned {}",
+                    b.data_type()
+                )));
+            }
+            check_rows(&b, &want, &v).map_err(|e| {
+                fail(format!(
+                    "with_precision_and_scale({p1}, {s1}) on {dt}: {e:?}"
+                ))
+            })?;
+        }
+        (Err(_), false) => {}
+        (r, _) => {
+            return Err(fail(format!(
+                "with_precision_and_scale({p1}, {s1}) on {dt}: {:?}, expected {}",
+                r.map(|b| b.data_type().clone()),
+                if valid { "Ok" } else { "an error" }
+            )));
+        }
+    }
+    known_bug.map_or(Ok(()), |why| Err(known(why)))
 }
 
 /// Decimals format as `format_decimal` documents, through

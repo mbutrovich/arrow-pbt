@@ -197,6 +197,12 @@ pub fn all_properties() -> Vec<Entry> {
             temporal::temporal_cast,
         ),
         entry(
+            "decimal_precision",
+            "decimal_precision",
+            cases::decimal_precision,
+            numeric::decimal_precision_prop,
+        ),
+        entry(
             "decimal_format",
             "decimal",
             cases::decimal,

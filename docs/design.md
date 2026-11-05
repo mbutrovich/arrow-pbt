@@ -47,7 +47,7 @@ These rules keep the results meaningful.
 
 1. The generator never drops valid inputs. Every array it produces is valid under the Arrow format, and every valid layout it knows is reachable.
 2. A case strategy restricts inputs only to the domain a kernel documents. When a kernel documents an error, the property asserts the error instead of avoiding the input.
-3. A known bug is filtered by its failure signature, never by input type. Each filter names its issue. See [workflow.md](workflow.md).
+3. A known bug is filtered by its failure signature, never by input type. Each filter names its issue. A bug that fails one check on every input of a kind skips that check through `known::tolerated` instead, since discarding would discard every case. See [workflow.md](workflow.md).
 4. Every discard is counted by reason. `ARROW_PBT_REASONS=1` prints them.
 5. Generators are measured, not assumed. `arrow-pbt coverage` and `arrow-pbt inventory` report what the inputs contain, measured on the built arrays.
 6. An oracle is checked by breaking it. Changing the oracle on purpose (truncating instead of rounding, dropping a leading zero) must make its property fail. If it does not, the property is not checking what it claims.

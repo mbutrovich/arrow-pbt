@@ -49,6 +49,8 @@ A failing property stops at its first failure, so a known bug would mask every o
 
 When the bug aborts the process, as undefined behavior that a standard library check catches in a debug build does, its signature cannot be read after the call. The filter then checks the bug's precondition before the call, by calling the project on its own or by computing the condition from the input's values, never by input type. The filter for `take_record_batch` calls `take` on the first column and discards the case when it returns for an index out of bounds.
 
+When the bug fails one check on every input of a kind, so that a discard would discard every case, skip that check with `known::tolerated` and keep the case's other checks. `ARROW_PBT_NO_KNOWN=1` turns it into a failure as it does a discard, but `ARROW_PBT_REASONS` cannot count it, so its row in [known-bugs.md](known-bugs.md) is the record. `decimal_precision` skips the type check of `null_if_overflow_precision` this way for [apache/arrow-rs#11300](https://github.com/apache/arrow-rs/issues/11300).
+
 When the bug is in a path the generator itself uses to build arrays (FFI import, for example), the generator falls back to another layout and counts each fallback instead. `arrow-pbt coverage` prints those counts, so the gap stays visible.
 
 ## When a fix lands upstream

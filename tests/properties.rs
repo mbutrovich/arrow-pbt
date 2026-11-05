@@ -130,6 +130,11 @@ mod arrow_array_and_arrow_data {
     fn is_null() {
         check("is_null");
     }
+
+    #[test]
+    fn decimal_precision() {
+        check("decimal_precision");
+    }
 }
 
 /// arrow-ipc

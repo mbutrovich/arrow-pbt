@@ -33,3 +33,26 @@ pub fn known(reason: impl Into<String>) -> TestCaseError {
         TestCaseError::reject(reason)
     }
 }
+
+/// For a known bug that fails one check on every input of a kind, where
+/// discarding would discard every case: `Ok`, so the property goes on to its
+/// other checks, or a failure when `ARROW_PBT_NO_KNOWN` is set. Unlike
+/// [`known`], it is not counted among the discards
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt::known::tolerated;
+/// // Without ARROW_PBT_NO_KNOWN, the property skips the check and goes on
+/// assert!(tolerated("known: an example bug (apache/arrow-rs#1)").is_ok());
+/// ```
+pub fn tolerated(reason: impl Into<String>) -> Result<(), TestCaseError> {
+    if *NO_KNOWN {
+        Err(TestCaseError::fail(format!(
+            "known bug, filter disabled: {}",
+            reason.into()
+        )))
+    } else {
+        Ok(())
+    }
+}
