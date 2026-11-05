@@ -18,7 +18,8 @@ use proptest::test_runner::TestCaseError;
 use crate::{ArgType, fail};
 
 /// Builds an expression from its operands, which come in the order of the
-/// case's fields, and the schema of the batches it will see
+/// case's fields, and the schema of the batch it will see. The row-by-row
+/// law passes a schema with no fields, since every operand is then a literal
 pub type Build =
     dyn Fn(Vec<Arc<dyn PhysicalExpr>>, &Schema) -> datafusion_common::Result<Arc<dyn PhysicalExpr>>;
 
@@ -32,9 +33,9 @@ pub enum Operand {
 }
 
 /// An expression's operands, one for each field of `schema`, and the batches
-/// to evaluate it on. A batch holds a column for every field, including the
-/// fields whose operand is a literal, so that a law can swap a literal for a
-/// column
+/// to evaluate it on. A batch holds a column for each column operand, in the
+/// order of the operands, so its schema is `schema` without the fields of the
+/// literal operands
 #[derive(Clone, Debug)]
 pub struct ExprCase {
     pub schema: SchemaRef,
@@ -69,7 +70,7 @@ enum Literals {
 /// # Example
 ///
 /// ```
-/// use arrow_pbt_datafusion::exprs;
+/// use arrow_pbt_datafusion::{Operand, exprs};
 /// use arrow_schema::DataType;
 /// use proptest::strategy::{Strategy, ValueTree};
 /// use proptest::test_runner::TestRunner;
@@ -77,7 +78,8 @@ enum Literals {
 /// let strategy = exprs(&[vec![DataType::Boolean, DataType::Utf8]]).unwrap();
 /// let case = strategy.new_tree(&mut runner).unwrap().current();
 /// assert_eq!(case.operands.len(), 2);
-/// assert!(case.batches.iter().all(|b| b.schema == case.schema));
+/// let columns = case.operands.iter().filter(|o| matches!(o, Operand::Column)).count();
+/// assert!(case.batches.iter().all(|b| b.schema.fields().len() == columns));
 /// assert!(exprs(&[vec![DataType::Float16]]).is_err());
 /// ```
 pub fn exprs(signatures: &[Vec<DataType>]) -> Result<BoxedStrategy<ExprCase>, String> {
@@ -120,9 +122,20 @@ pub fn exprs(signatures: &[Vec<DataType>]) -> Result<BoxedStrategy<ExprCase>, St
                     }
                 })
                 .collect();
+            (Just(schema), operands)
+        })
+        .prop_flat_map(|(schema, operands): (SchemaRef, Vec<Operand>)| {
+            let columns: Vec<FieldRef> = schema
+                .fields()
+                .iter()
+                .zip(&operands)
+                .filter(|(_, o)| matches!(o, Operand::Column))
+                .map(|(f, _)| Arc::clone(f))
+                .collect();
             // The fields' types converted above, so they convert again
-            let batches = batches(&schema, ValueDomain::Logical).expect("converted types");
-            (Just(schema), operands, batches)
+            let batches = batches(&Arc::new(Schema::new(columns)), ValueDomain::Logical)
+                .expect("converted types");
+            (Just(schema), Just(operands), batches)
         })
         .prop_map(|(schema, operands, batches)| ExprCase {
             schema,
@@ -160,23 +173,30 @@ pub fn exprs(signatures: &[Vec<DataType>]) -> Result<BoxedStrategy<ExprCase>, St
 /// check("not", strategy, |case| check_expr_broadcast(&build, &case));
 /// ```
 pub fn check_expr_broadcast(build: &Build, case: &ExprCase) -> Result<(), TestCaseError> {
+    let literals = literals(case)?;
     for g in &case.batches {
         let batch = g.build();
         let n = batch.num_rows();
-        let drawn = evaluate(build, operands(case, &batch, None)?, &batch)?;
-        let mut columns = batch.columns().to_vec();
-        for (i, op) in case.operands.iter().enumerate() {
-            if let Operand::Literal(l) = op {
-                columns[i] = literal(l)?
+        let drawn = evaluate(build, operands(case, &literals, &batch, None)?, &batch)?;
+        let mut drawn_columns = batch.columns().iter();
+        let columns = literals
+            .iter()
+            .map(|l| match l {
+                Some(l) => l
                     .to_array_of_size(n)
-                    .map_err(|e| fail(format!("ScalarValue::to_array_of_size: {e}")))?;
-            }
-        }
+                    .map_err(|e| fail(format!("ScalarValue::to_array_of_size: {e}"))),
+                None => Ok(Arc::clone(
+                    drawn_columns.next().expect("a column per operand"),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let options = RecordBatchOptions::new().with_row_count(Some(n));
         let broadcast =
             RecordBatch::try_new_with_options(Arc::clone(&case.schema), columns, &options)
                 .map_err(|e| fail(format!("a batch of the literals broadcast: {e}")))?;
-        let columns = (0..case.operands.len()).map(|i| column(case, i)).collect();
+        let columns = (0..case.operands.len())
+            .map(|i| column(case, i, i))
+            .collect();
         let arrays = evaluate(build, columns, &broadcast)?;
         match (drawn, arrays) {
             (Err(_), Err(_)) => {}
@@ -214,8 +234,9 @@ pub fn check_expr_broadcast(build: &Build, case: &ExprCase) -> Result<(), TestCa
 
 /// Checks the row-by-row law for the expression `build` makes on each batch
 /// of `case`: each row of the expression as drawn equals the expression with
-/// every operand as that row's literal, on that row of the batch, and the
-/// expression as drawn fails only when some row fails on its own. A case
+/// every operand as that row's literal, and the expression as drawn fails
+/// only when some row fails on its own. Every operand of a row is a literal,
+/// so each row is evaluated on a batch of one row with no columns. A case
 /// whose operands are all literals has nothing to evaluate row by row, and
 /// passes
 ///
@@ -246,14 +267,21 @@ pub fn check_expr_row_by_row(build: &Build, case: &ExprCase) -> Result<(), TestC
     {
         return Ok(());
     }
+    let literals = literals(case)?;
+    let one = RecordBatch::try_new_with_options(
+        Arc::new(Schema::empty()),
+        vec![],
+        &RecordBatchOptions::new().with_row_count(Some(1)),
+    )
+    .map_err(|e| fail(format!("a batch of one row: {e}")))?;
     for g in &case.batches {
         let batch = g.build();
         let n = batch.num_rows();
         if n == 0 {
             continue;
         }
-        let drawn = evaluate(build, operands(case, &batch, None)?, &batch)?;
-        let row = |i: usize| evaluate(build, operands(case, &batch, Some(i))?, &batch.slice(i, 1));
+        let drawn = evaluate(build, operands(case, &literals, &batch, None)?, &batch)?;
+        let row = |i: usize| evaluate(build, operands(case, &literals, &batch, Some(i))?, &one);
         match drawn {
             Err(e) => {
                 let mut any = false;
@@ -313,12 +341,13 @@ pub fn check_expr_split(build: &Build, case: &ExprCase) -> Result<(), TestCaseEr
         return Ok(());
     }
     let parts: Vec<RecordBatch> = case.batches.iter().map(GeneratedBatch::build).collect();
-    let whole =
-        concat_batches(&case.schema, &parts).map_err(|e| fail(format!("concat_batches: {e}")))?;
-    let all = evaluate(build, operands(case, &whole, None)?, &whole)?;
+    let whole = concat_batches(&parts[0].schema(), &parts)
+        .map_err(|e| fail(format!("concat_batches: {e}")))?;
+    let literals = literals(case)?;
+    let all = evaluate(build, operands(case, &literals, &whole, None)?, &whole)?;
     let each = parts
         .iter()
-        .map(|b| evaluate(build, operands(case, b, None)?, b))
+        .map(|b| evaluate(build, operands(case, &literals, b, None)?, b))
         .collect::<Result<Vec<_>, _>>()?;
     match all {
         Err(e) => {
@@ -346,31 +375,47 @@ pub fn check_expr_split(build: &Build, case: &ExprCase) -> Result<(), TestCaseEr
 /// instead a literal of that row of `batch`
 fn operands(
     case: &ExprCase,
+    literals: &[Option<ScalarValue>],
     batch: &RecordBatch,
     row: Option<usize>,
 ) -> Result<Vec<Arc<dyn PhysicalExpr>>, TestCaseError> {
-    case.operands
+    // The batch's column of each column operand
+    let mut j = 0;
+    literals
         .iter()
         .enumerate()
-        .map(|(i, op)| match (op, row) {
-            (Operand::Column, None) => Ok(column(case, i)),
-            (Operand::Column, Some(r)) => ScalarValue::try_from_array(batch.column(i), r)
-                .map(|s| Arc::new(Literal::new(s)) as Arc<dyn PhysicalExpr>)
-                .map_err(|e| fail(format!("ScalarValue::try_from_array: {e}"))),
-            (Operand::Literal(l), _) => {
-                literal(l).map(|s| Arc::new(Literal::new(s)) as Arc<dyn PhysicalExpr>)
-            }
+        .map(|(i, l)| {
+            let Some(s) = l else {
+                j += 1;
+                return match row {
+                    None => Ok(column(case, i, j - 1)),
+                    Some(r) => ScalarValue::try_from_array(batch.column(j - 1), r)
+                        .map(|s| Arc::new(Literal::new(s)) as Arc<dyn PhysicalExpr>)
+                        .map_err(|e| fail(format!("ScalarValue::try_from_array: {e}"))),
+                };
+            };
+            Ok(Arc::new(Literal::new(s.clone())) as Arc<dyn PhysicalExpr>)
         })
         .collect()
 }
 
-fn column(case: &ExprCase, i: usize) -> Arc<dyn PhysicalExpr> {
-    Arc::new(Column::new(case.schema.field(i).name(), i))
+/// The value of each literal operand of `case`, built once for all the
+/// expressions a law evaluates
+fn literals(case: &ExprCase) -> Result<Vec<Option<ScalarValue>>, TestCaseError> {
+    case.operands
+        .iter()
+        .map(|op| match op {
+            Operand::Column => Ok(None),
+            Operand::Literal(l) => ScalarValue::try_from_array(&l.build(), 0)
+                .map(Some)
+                .map_err(|e| fail(format!("ScalarValue::try_from_array: {e}"))),
+        })
+        .collect()
 }
 
-fn literal(l: &GeneratedArray) -> Result<ScalarValue, TestCaseError> {
-    ScalarValue::try_from_array(&l.build(), 0)
-        .map_err(|e| fail(format!("ScalarValue::try_from_array: {e}")))
+/// Operand `i` as column `j` of a batch
+fn column(case: &ExprCase, i: usize, j: usize) -> Arc<dyn PhysicalExpr> {
+    Arc::new(Column::new(case.schema.field(i).name(), j))
 }
 
 /// Builds the expression and evaluates it on `batch`, returning the field it

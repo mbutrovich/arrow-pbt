@@ -25,6 +25,7 @@ use datafusion_expr::type_coercion::binary::comparison_coercion_with_session_tim
 use datafusion_expr::type_coercion::other::get_coerce_type_for_case_expression;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_expr::expressions::{Literal, case, in_list};
+use proptest::prelude::any;
 use proptest::test_runner::TestCaseError;
 
 /// Checks the three laws for the expressions `build` makes, on operands of
@@ -182,15 +183,25 @@ fn in_signatures(t: &DataType) -> Vec<Vec<DataType>> {
         .collect()
 }
 
-/// Defines a test of `IN` and `NOT IN` for each type
+/// Checks the three laws for `IN` on operands of the types of one of
+/// `signatures`, as `IN` or `NOT IN`, which each case draws
+fn in_laws(name: &str, signatures: &[Vec<DataType>]) {
+    let cases = (exprs(signatures).unwrap(), any::<bool>());
+    check(name, cases, |(case, negated): (ExprCase, bool)| {
+        let build = in_of(negated);
+        check_expr_broadcast(&build, &case)?;
+        check_expr_row_by_row(&build, &case)?;
+        check_expr_split(&build, &case)
+    });
+}
+
+/// Defines a test of `IN` for each type
 macro_rules! in_tests {
     ($($name:ident: $t:expr;)*) => {
         $(
             #[test]
             fn $name() {
-                let signatures = in_signatures(&$t);
-                laws(concat!(stringify!($name), " in"), &in_of(false), &signatures);
-                laws(concat!(stringify!($name), " not in"), &in_of(true), &signatures);
+                in_laws(stringify!($name), &in_signatures(&$t));
             }
         )*
     };
