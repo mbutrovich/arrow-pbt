@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use arrow_array::{Array, ArrayRef};
-use arrow_pbt::generator::{GeneratedArray, GeneratorType, ValueDomain, array_in, len};
+use arrow_pbt::generator::{GeneratedArray, GeneratorType, ValueDomain, array, len};
 use arrow_pbt::val::{check_rows, vals};
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::config::ConfigOptions;
@@ -110,8 +110,8 @@ impl ArgType {
         };
         field
             .prop_flat_map(move |(f, t)| {
-                let rows = array_in(&t, n, ValueDomain::Logical).prop_map(Arg::Array);
-                let scalar = array_in(&t, 1, ValueDomain::Logical).prop_map(Arg::Scalar);
+                let rows = array(&t, n, ValueDomain::Logical).prop_map(Arg::Array);
+                let scalar = array(&t, 1, ValueDomain::Logical).prop_map(Arg::Scalar);
                 (Just(f), prop_oneof![rows, scalar])
             })
             .boxed()

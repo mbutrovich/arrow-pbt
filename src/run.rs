@@ -34,10 +34,10 @@ use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, Test
 /// # Example
 ///
 /// ```
-/// use arrow_pbt::generator::{GeneratorType, array};
+/// use arrow_pbt::generator::{GeneratorType, ValueDomain, array};
 /// use arrow_pbt::run::check;
 /// use arrow_pbt::val::check_rows;
-/// check("built", array(&GeneratorType::Utf8, 10), |g| {
+/// check("built", array(&GeneratorType::Utf8, 10, ValueDomain::Arrow), |g| {
 ///     check_rows(&g.build(), &g.ty.data_type(), &g.rows)
 /// });
 /// ```

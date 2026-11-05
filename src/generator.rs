@@ -16,12 +16,12 @@ use arrow_array::types::{
 use arrow_array::{
     Array, ArrayRef, BinaryArray, BooleanArray, DictionaryArray, FixedSizeBinaryArray,
     FixedSizeListArray, Int8Array, Int32Array, Int64Array, LargeListArray, LargeStringArray,
-    ListArray, ListViewArray, NullArray, RunArray, StringArray, StructArray, UnionArray,
-    make_array,
+    ListArray, ListViewArray, NullArray, RecordBatch, RecordBatchOptions, RunArray, StringArray,
+    StructArray, UnionArray, make_array,
 };
 use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_data::{ArrayData, BufferSpec, layout};
-use arrow_schema::{DataType, Field, Fields, UnionFields, UnionMode};
+use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef, UnionFields, UnionMode};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Signed, ToPrimitive, Zero};
 use proptest::collection::vec;
@@ -33,6 +33,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use crate::props::leaf_cmp;
+use crate::types::any_type;
 use crate::val::Val;
 use arrow_array::Int16Array;
 use arrow_array::LargeBinaryArray;
@@ -1645,24 +1646,9 @@ pub fn all_types() -> BoxedStrategy<GeneratorType> {
 /// assert!(arrow_pbt::spec::check(&a.to_data()).is_ok());
 /// ```
 pub fn array_of(types: BoxedStrategy<GeneratorType>) -> BoxedStrategy<GeneratedArray> {
-    (types, len()).prop_flat_map(|(t, n)| array(&t, n)).boxed()
-}
-
-/// An array of type `ty` with `n` rows
-///
-/// # Example
-///
-/// ```
-/// use arrow_pbt::generator::{GeneratorType, array};
-/// use arrow_array::Array;
-/// use proptest::strategy::{Strategy, ValueTree};
-/// use proptest::test_runner::TestRunner;
-/// let mut runner = TestRunner::deterministic();
-/// let g = array(&GeneratorType::Utf8, 10).new_tree(&mut runner).unwrap().current();
-/// assert_eq!(g.build().len(), 10);
-/// ```
-pub fn array(ty: &GeneratorType, n: usize) -> BoxedStrategy<GeneratedArray> {
-    array_in(ty, n, ValueDomain::Arrow)
+    (types, len())
+        .prop_flat_map(|(t, n)| array(&t, n, ValueDomain::Arrow))
+        .boxed()
 }
 
 /// The values the generator draws for a type
@@ -1679,12 +1665,14 @@ pub enum ValueDomain {
 }
 
 /// An array of type `ty` with `n` rows, whose values come from `domain`, in
-/// its rows and in the valid slots its layout fills
+/// its rows and in the valid slots its layout fills. A project that rejects
+/// decimals past their precision, as DataFusion does, needs
+/// [`ValueDomain::Logical`]
 ///
 /// # Example
 ///
 /// ```
-/// use arrow_pbt::generator::{GeneratorType, ValueDomain, array_in};
+/// use arrow_pbt::generator::{GeneratorType, ValueDomain, array};
 /// use arrow_array::Array;
 /// use arrow_array::cast::AsArray;
 /// use arrow_array::types::Decimal32Type;
@@ -1694,7 +1682,7 @@ pub enum ValueDomain {
 /// let mut runner = TestRunner::deterministic();
 /// let t = GeneratorType::try_from(&DataType::Decimal32(3, 1)).unwrap();
 /// for _ in 0..100 {
-///     let a = array_in(&t, 20, ValueDomain::Logical)
+///     let a = array(&t, 20, ValueDomain::Logical)
 ///         .new_tree(&mut runner)
 ///         .unwrap()
 ///         .current()
@@ -1702,11 +1690,7 @@ pub enum ValueDomain {
 ///     assert!(a.as_primitive::<Decimal32Type>().validate_decimal_precision(3).is_ok());
 /// }
 /// ```
-pub fn array_in(
-    ty: &GeneratorType,
-    n: usize,
-    domain: ValueDomain,
-) -> BoxedStrategy<GeneratedArray> {
+pub fn array(ty: &GeneratorType, n: usize, domain: ValueDomain) -> BoxedStrategy<GeneratedArray> {
     let ty = ty.clone();
     (rows(&ty, n), seed())
         .prop_map(move |(rows, seed)| GeneratedArray {
@@ -1741,6 +1725,170 @@ impl GeneratedArray {
             &self.rows,
             &mut Layout::new(self.seed, self.domain),
         )
+    }
+}
+
+/// Zero to four fields of any types, named from `c0`, each nullable three
+/// times in four. A field whose type holds `Null` is always nullable, since
+/// a `Null` array is all null
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt::generator::{ValueDomain, batch, schemas};
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let s = schemas().new_tree(&mut runner).unwrap().current();
+/// assert!(s.fields().len() <= 4);
+/// assert!(batch(&s, 10, ValueDomain::Arrow).is_ok());
+/// ```
+pub fn schemas() -> BoxedStrategy<SchemaRef> {
+    let nullable = prop_oneof![3 => Just(true), 1 => Just(false)];
+    prop_oneof![1 => Just(0usize), 7 => 1..=4usize]
+        .prop_flat_map(move |k| vec((all_types(), nullable.clone()), k))
+        .prop_map(|cols| {
+            let fields: Vec<Field> = cols
+                .iter()
+                .enumerate()
+                .map(|(i, (t, nullable))| {
+                    let nullable = *nullable || any_type(&t.data_type(), &DataType::is_null);
+                    Field::new(format!("c{i}"), t.data_type(), nullable)
+                })
+                .collect();
+            Arc::new(Schema::new(fields))
+        })
+        .boxed()
+}
+
+/// A batch of `schema` with `n` rows, each column with its own layout and
+/// with values from `domain`
+///
+/// # Errors
+///
+/// When the generator cannot build the type of a field, such as `Float16`
+///
+/// # Example
+///
+/// ```
+/// use std::sync::Arc;
+/// use arrow_pbt::generator::{ValueDomain, batch};
+/// use arrow_schema::{DataType, Field, Schema};
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let s = Arc::new(Schema::new(vec![Field::new("a", DataType::Int64, false)]));
+/// let mut runner = TestRunner::deterministic();
+/// let g = batch(&s, 5, ValueDomain::Arrow).unwrap().new_tree(&mut runner).unwrap().current();
+/// let b = g.build();
+/// assert_eq!(b.schema(), s);
+/// assert_eq!(b.num_rows(), 5);
+/// assert_eq!(b.column(0).null_count(), 0);
+/// ```
+pub fn batch(
+    schema: &SchemaRef,
+    n: usize,
+    domain: ValueDomain,
+) -> Result<BoxedStrategy<GeneratedBatch>, String> {
+    Ok(batch_of(schema, &column_types(schema)?, n, domain))
+}
+
+/// Zero to four batches of `schema`, none one time in ten, each with its own
+/// length as [`len`] draws it, which includes no rows
+///
+/// # Errors
+///
+/// When the generator cannot build the type of a field, such as `Float16`
+///
+/// # Example
+///
+/// ```
+/// use std::sync::Arc;
+/// use arrow_pbt::generator::{ValueDomain, batches};
+/// use arrow_schema::{DataType, Field, Schema};
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let s = Arc::new(Schema::new(vec![Field::new("a", DataType::Utf8, true)]));
+/// let mut runner = TestRunner::deterministic();
+/// let gs = batches(&s, ValueDomain::Arrow).unwrap().new_tree(&mut runner).unwrap().current();
+/// assert!(gs.len() <= 4);
+/// assert!(gs.iter().all(|g| g.build().schema() == s));
+/// ```
+pub fn batches(
+    schema: &SchemaRef,
+    domain: ValueDomain,
+) -> Result<BoxedStrategy<Vec<GeneratedBatch>>, String> {
+    let types = column_types(schema)?;
+    let schema = schema.clone();
+    let one = len()
+        .prop_flat_map(move |n| batch_of(&schema, &types, n, domain))
+        .boxed();
+    Ok(prop_oneof![1 => Just(0usize), 9 => 1..=4usize]
+        .prop_flat_map(move |k| vec(one.clone(), k))
+        .boxed())
+}
+
+fn column_types(schema: &Schema) -> Result<Vec<GeneratorType>, String> {
+    schema
+        .fields()
+        .iter()
+        .map(|f| {
+            GeneratorType::try_from(f.as_ref()).map_err(|e| format!("field {}: {e}", f.name()))
+        })
+        .collect()
+}
+
+fn batch_of(
+    schema: &SchemaRef,
+    types: &[GeneratorType],
+    n: usize,
+    domain: ValueDomain,
+) -> BoxedStrategy<GeneratedBatch> {
+    let schema = schema.clone();
+    let columns: Vec<_> = types.iter().map(|t| array(t, n, domain)).collect();
+    columns
+        .prop_map(move |columns| GeneratedBatch {
+            schema: schema.clone(),
+            columns,
+            num_rows: n,
+        })
+        .boxed()
+}
+
+/// A batch as [`batch`] generates it: its schema, an array for each field,
+/// and its row count, which a batch with no columns needs
+#[derive(Clone, Debug)]
+pub struct GeneratedBatch {
+    pub schema: SchemaRef,
+    pub columns: Vec<GeneratedArray>,
+    pub num_rows: usize,
+}
+
+impl GeneratedBatch {
+    /// The batch, with each column as [`GeneratedArray::build`] makes it
+    ///
+    /// # Panics
+    ///
+    /// When the columns do not match the schema or the row count. A batch
+    /// from [`batch`] or [`batches`] always matches
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use arrow_pbt::generator::{GeneratedBatch, ValueDomain, batch};
+    /// use arrow_schema::Schema;
+    /// use proptest::strategy::{Strategy, ValueTree};
+    /// use proptest::test_runner::TestRunner;
+    /// let s = Arc::new(Schema::empty());
+    /// let mut runner = TestRunner::deterministic();
+    /// let g: GeneratedBatch = batch(&s, 3, ValueDomain::Arrow).unwrap().new_tree(&mut runner).unwrap().current();
+    /// assert_eq!(g.build().num_rows(), 3);
+    /// ```
+    pub fn build(&self) -> RecordBatch {
+        let columns = self.columns.iter().map(GeneratedArray::build).collect();
+        let options = RecordBatchOptions::new().with_row_count(Some(self.num_rows));
+        RecordBatch::try_new_with_options(self.schema.clone(), columns, &options)
+            .unwrap_or_else(|e| panic!("columns that do not match {}: {e}", self.schema))
     }
 }
 

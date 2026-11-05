@@ -136,16 +136,14 @@ Iceberg types map to a subset of arrow types, and one Iceberg type often has sev
 ### What the library gives adapters
 
 - `GeneratorType::try_from` for a `DataType` or a `Field`. Arrays built from the result have that type exactly, with every child field's name, nullability and metadata, and hold no null that a field forbids. Dictionary and run-end encoded values can be of any type. A type the generator cannot build, such as `Float16`, is an error.
-- `array(ty, n)` for an array of a given type and length, such as a function's argument or a batch's column, and `array_in(ty, n, domain)` for one whose values come from a `ValueDomain`. [Decimals past their precision](#what-the-generator-varies) says which domain an adapter needs.
+- `array(ty, n, domain)` for an array of a given type and length whose values come from a `ValueDomain`, such as a function's argument. [Decimals past their precision](#what-the-generator-varies) says which domain an adapter needs.
+- `batch(schema, n, domain)` for a record batch of a given schema and row count, and `batches(schema, domain)` for a stream of zero to four batches of one schema, each with its own length, empty batches included. Each column has its own layout. A schema with a field the generator cannot build is an error. `schemas()` draws schemas of zero to four fields of any types.
 - `run::check`, the runner every property goes through, with its settings in `ARROW_PBT_*` variables, fixed seeds, discards by reason, and a rerun command on failure.
-- `GeneratedArray`, `Mask` and `Indices`, the results of `array_of`, `mask` and `indices`, each with a `build` method.
+- `GeneratedArray`, `GeneratedBatch`, `Mask` and `Indices`, the results of `array_of`, `batch`, `mask` and `indices`, each with a `build` method.
 - `run::caught`, which turns a panic into a failure inside a property, so that a known-bug filter can match its message.
 - `val::check_rows`, the output check of every property. It accepts the generator's rows as they are.
 
-Two things wait until a property needs them. The [Parquet properties](coverage.md#parquet) and the Iceberg adapter need both:
-
-1. **Record batches.** A strategy for a `RecordBatch` of a schema, a few lines over `array`. A batch with no columns needs its row count set.
-2. **Typed access to `Val`.** A fixed-width value is a `Val::Raw` of little-endian bytes. Turning it into a downstream value, such as an Iceberg `Datum`, needs a decoder for each `DataType`, which belongs in `val` rather than in each adapter.
+Typed access to `Val` waits until a property needs it, as the [Parquet properties](coverage.md#parquet) and the Iceberg adapter will. A fixed-width value is a `Val::Raw` of little-endian bytes. Turning it into a downstream value, such as an Iceberg `Datum`, needs a decoder for each `DataType`, which belongs in `val` rather than in each adapter.
 
 ## Measuring
 

@@ -9,12 +9,14 @@ use arrow_array::types::{Decimal32Type, Decimal64Type, Decimal128Type, Decimal25
 use arrow_array::{Array, make_array};
 use arrow_data::{ArrayData, BufferSpec, layout};
 use arrow_pbt::generator::{
-    GeneratedArray, GeneratorType, ValueDomain, all_types, array, array_in, build, len, rows, seed,
+    GeneratedArray, GeneratorType, ValueDomain, all_types, array, batch, batches, build, len, rows,
+    schemas, seed,
 };
 use arrow_pbt::run::check;
 use arrow_pbt::val::{Val, check_rows};
 use arrow_schema::{
-    ArrowError, DataType, Field, FieldRef, Fields, IntervalUnit, TimeUnit, UnionFields, UnionMode,
+    ArrowError, DataType, Field, FieldRef, Fields, IntervalUnit, Schema, SchemaRef, TimeUnit,
+    UnionFields, UnionMode,
 };
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -383,7 +385,10 @@ fn arrays_of_a_type_and_length() {
     let mut runner = TestRunner::deterministic();
     for n in [0, 1, 300] {
         for t in &types {
-            let g = array(t, n).new_tree(&mut runner).unwrap().current();
+            let g = array(t, n, ValueDomain::Arrow)
+                .new_tree(&mut runner)
+                .unwrap()
+                .current();
             assert_eq!(g.ty.data_type(), t.data_type());
             assert_eq!(g.rows.len(), n);
             if let Err(TestCaseError::Fail(e)) =
@@ -392,7 +397,10 @@ fn arrays_of_a_type_and_length() {
                 panic!("{n} rows: {e}");
             }
         }
-        let g = array(&types[0], n).new_tree(&mut runner).unwrap().current();
+        let g = array(&types[0], n, ValueDomain::Arrow)
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
         assert!(
             !g.rows.contains(&Val::Null),
             "a null in a non-nullable array"
@@ -417,7 +425,7 @@ fn values_at_the_minimum_alignment() {
         };
         let mut below_width = 0;
         for n in 1..=200 {
-            let a = array(&t, n)
+            let a = array(&t, n, ValueDomain::Arrow)
                 .new_tree(&mut runner)
                 .unwrap()
                 .current()
@@ -505,7 +513,7 @@ fn decimal_types() -> BoxedStrategy<GeneratorType> {
 
 fn arrays_in(domain: ValueDomain) -> BoxedStrategy<GeneratedArray> {
     (prop_oneof![decimal_types(), all_types()], len())
-        .prop_flat_map(move |(t, n)| array_in(&t, n, domain))
+        .prop_flat_map(move |(t, n)| array(&t, n, domain))
         .boxed()
 }
 
@@ -529,4 +537,108 @@ fn arrow_decimals_can_exceed_their_precision() {
         within_precision(&g.build().to_data()).is_err()
     });
     assert!(past, "no decimal past its precision in 256 arrays");
+}
+
+/// Batches of a given schema have that schema exactly, metadata included,
+/// the requested rows, and columns that hold their generated rows, for a
+/// schema with no fields too
+#[test]
+fn batches_of_a_schema() {
+    let element = Arc::new(field("element", DataType::Utf8, false, 3));
+    let schema: SchemaRef = Arc::new(Schema::new_with_metadata(
+        vec![
+            field("id", DataType::Int64, false, 1),
+            field("names", DataType::List(element), true, 2),
+            Field::new("price", DataType::Decimal128(5, 2), true),
+        ],
+        HashMap::from([("k".to_string(), "v".to_string())]),
+    ));
+    let mut runner = TestRunner::deterministic();
+    for s in [schema, Arc::new(Schema::empty())] {
+        for n in [0, 1, 300] {
+            for domain in [ValueDomain::Arrow, ValueDomain::Logical] {
+                let g = batch(&s, n, domain)
+                    .unwrap()
+                    .new_tree(&mut runner)
+                    .unwrap()
+                    .current();
+                let b = g.build();
+                assert_eq!(b.schema(), s);
+                assert_eq!(b.num_rows(), n);
+                assert_eq!(g.columns.len(), s.fields().len());
+                for (c, col) in b.columns().iter().zip(&g.columns) {
+                    assert_eq!(col.domain, domain);
+                    if let Err(TestCaseError::Fail(e)) = check_rows(c, c.data_type(), &col.rows) {
+                        panic!("{n} rows, {domain:?}: {e}");
+                    }
+                    if domain == ValueDomain::Logical {
+                        within_precision(&c.to_data()).unwrap();
+                    }
+                }
+                if n > 0 && !s.fields().is_empty() {
+                    assert_eq!(
+                        b.column(0).null_count(),
+                        0,
+                        "a null in a non-nullable column"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A schema with a type the generator cannot build is an error that names
+/// the field
+#[test]
+fn batches_of_an_unsupported_schema() {
+    let s: SchemaRef = Arc::new(Schema::new(vec![Field::new(
+        "half",
+        DataType::Float16,
+        true,
+    )]));
+    let e = batch(&s, 1, ValueDomain::Arrow).err().unwrap();
+    assert!(e.contains("field half"), "{e}");
+    assert!(batches(&s, ValueDomain::Arrow).is_err());
+}
+
+/// Streams of batches of generated schemas share their schema, and each
+/// batch holds its rows
+#[test]
+fn streams_of_generated_schemas() {
+    let strategy = schemas().prop_flat_map(|s| {
+        batches(&s, ValueDomain::Arrow)
+            .unwrap()
+            .prop_map(move |b| (s.clone(), b))
+    });
+    check("streams of generated schemas", strategy, |(s, gs)| {
+        for g in &gs {
+            let b = g.build();
+            prop_assert_eq!(b.schema(), s.clone());
+            prop_assert_eq!(b.num_rows(), g.num_rows);
+            for (c, col) in b.columns().iter().zip(&g.columns) {
+                check_rows(c, c.data_type(), &col.rows)?;
+            }
+        }
+        Ok(())
+    });
+}
+
+/// A stream is sometimes no batches, and sometimes holds an empty batch or
+/// batches of different lengths
+#[test]
+fn streams_vary_in_shape() {
+    let s: SchemaRef = Arc::new(Schema::new(vec![Field::new("a", DataType::Int32, true)]));
+    let strategy = batches(&s, ValueDomain::Arrow).unwrap();
+    let mut runner = TestRunner::deterministic();
+    let (mut none, mut empty, mut uneven) = (false, false, false);
+    for _ in 0..256 {
+        let gs = strategy.new_tree(&mut runner).unwrap().current();
+        none |= gs.is_empty();
+        empty |= gs.iter().any(|g| g.num_rows == 0);
+        uneven |= gs.windows(2).any(|w| w[0].num_rows != w[1].num_rows);
+    }
+    assert!(
+        none && empty && uneven,
+        "none {none}, empty {empty}, uneven {uneven}"
+    );
 }

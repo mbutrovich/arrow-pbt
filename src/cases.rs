@@ -12,7 +12,8 @@ use proptest::sample::select;
 use crate::batches::{CoalesceCase, InterleaveBatches};
 use crate::generator::value_types;
 use crate::generator::{
-    GeneratedArray, GeneratorType, all_types, array_of, build, indices, len, mask, rows, seed,
+    GeneratedArray, GeneratorType, ValueDomain, all_types, array_of, batch, build, indices, len,
+    mask, rows, schemas, seed,
 };
 use crate::numeric::FixedPointCase;
 use crate::order::SortCase;
@@ -92,45 +93,12 @@ pub fn interleave() -> BoxedStrategy<Interleave> {
         .boxed()
 }
 
-/// Zero to four columns of any types, named from `c0`, each nullable three
-/// times in four, and the types that build arrays for those fields
-fn columns() -> BoxedStrategy<(SchemaRef, Vec<GeneratorType>)> {
-    use arrow_schema::{Field, Schema};
-    let nullable = prop_oneof![3 => Just(true), 1 => Just(false)];
-    prop_oneof![1 => Just(0usize), 7 => 1..=4usize]
-        .prop_flat_map(move |k| vec((all_types(), nullable.clone()), k))
-        .prop_map(|cols| {
-            let fields: Vec<Field> = cols
-                .iter()
-                .enumerate()
-                .map(|(i, (t, nullable))| {
-                    // A Null array is all null, so a field with one inside
-                    // must be nullable
-                    let nullable = *nullable || any_type(&t.data_type(), &DataType::is_null);
-                    Field::new(format!("c{i}"), t.data_type(), nullable)
-                })
-                .collect();
-            let types = fields
-                .iter()
-                .map(|f| GeneratorType::try_from(f).unwrap())
-                .collect();
-            (Arc::new(Schema::new(fields)), types)
-        })
+/// A built batch of a generated schema with `n` rows
+fn built_batch(schema: &SchemaRef, n: usize) -> BoxedStrategy<RecordBatch> {
+    batch(schema, n, ValueDomain::Arrow)
+        .expect("every generated type converts")
+        .prop_map(|g| g.build())
         .boxed()
-}
-
-/// A batch of `n` rows of `types`, each column with its own layout
-fn batch(schema: SchemaRef, types: Vec<GeneratorType>, n: usize) -> BoxedStrategy<RecordBatch> {
-    let cols: Vec<_> = types.iter().map(|t| (rows(t, n), seed())).collect();
-    cols.prop_map(move |cols| {
-        let cols = types
-            .iter()
-            .zip(cols)
-            .map(|(t, (r, s))| build(t, &r, s))
-            .collect();
-        record_batch(schema.clone(), cols, n)
-    })
-    .boxed()
 }
 
 /// `cols` as a batch of `n` rows. A batch with no columns needs the count
@@ -141,17 +109,17 @@ fn record_batch(schema: SchemaRef, cols: Vec<ArrayRef>, n: usize) -> RecordBatch
 
 /// A batch and indices into it, as `take` draws them
 pub fn take_record_batch() -> BoxedStrategy<(RecordBatch, Int32Array)> {
-    (columns(), len())
-        .prop_flat_map(|((schema, types), n)| (batch(schema, types, n), take_indices(n)))
+    (schemas(), len())
+        .prop_flat_map(|(schema, n)| (built_batch(&schema, n), take_indices(n)))
         .boxed()
 }
 
 /// Zero to four batches of one schema, each with its own length, and
 /// `(batch, row)` pairs into them
 pub fn interleave_record_batch() -> BoxedStrategy<InterleaveBatches> {
-    (columns(), prop_oneof![1 => Just(0usize), 9 => 1..=4usize])
-        .prop_flat_map(|((schema, types), k)| {
-            let one = len().prop_flat_map(move |n| batch(schema.clone(), types.clone(), n));
+    (schemas(), prop_oneof![1 => Just(0usize), 9 => 1..=4usize])
+        .prop_flat_map(|(schema, k)| {
+            let one = len().prop_flat_map(move |n| built_batch(&schema, n));
             vec(one, k)
         })
         .prop_flat_map(|batches| {
