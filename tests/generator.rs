@@ -460,8 +460,7 @@ fn within_precision(d: &ArrayData) -> Result<(), ArrowError> {
 
 /// Whether every valid value of `a` fits precision `p`. It checks each value
 /// on its own because `PrimitiveArray::validate_decimal_precision` rejects
-/// every array with a negative scale, a bug in arrow-rs `main` at
-/// cc58320c2d
+/// every array with a negative scale (apache/arrow-rs#12095)
 fn fits<T: DecimalType>(a: &ArrayRef, p: u8) -> Result<(), ArrowError> {
     let a = a.as_primitive::<T>();
     a.iter()
