@@ -104,6 +104,8 @@ For arrow-rs:
 
 For a DataFusion scalar function, add a line to `law_tests!` in `arrow-pbt-datafusion/tests/functions.rs` with the function and its signatures, the argument types it accepts after coercion. The test first checks each signature with DataFusion's `fields_with_udf`, which leaves a signature unchanged only if the planner would pass it as it is, then runs `check_broadcast` and `check_row_by_row` through `run::check`. A function with a known bug calls `laws_with` instead, whose hooks hold the filters: one before the call, for a bug that aborts the process, and one that maps a failure to its discard. `repeat` uses the first, `ceil` the second, and `lpad` both. Run it with `ARROW_PBT_CASES` in the thousands.
 
+For a DataFusion physical expression, write a closure that builds it from its operand expressions and a function that lists its operand types, and check in that function that DataFusion's coercion leaves those types unchanged, as `case_signatures` in `arrow-pbt-datafusion/tests/exprs.rs` does. Then run `check_expr_broadcast`, `check_expr_row_by_row` and `check_expr_split` through `run::check` over `exprs`.
+
 ## Adding an adapter
 
 An adapter tests a project built on arrow-rs, through the four parts that [Downstream adapters](design.md#downstream-adapters) describes:

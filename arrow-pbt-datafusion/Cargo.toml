@@ -12,8 +12,10 @@ publish = false
 arrow-array.workspace = true
 arrow-pbt = { path = ".." }
 arrow-schema.workspace = true
+arrow-select.workspace = true
 datafusion-common.workspace = true
 datafusion-expr.workspace = true
+datafusion-physical-expr.workspace = true
 proptest.workspace = true
 
 [dev-dependencies]

@@ -15,6 +15,12 @@ use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::test_runner::TestCaseError;
 
+mod expr;
+
+pub use expr::{
+    Build, ExprCase, Operand, check_expr_broadcast, check_expr_row_by_row, check_expr_split, exprs,
+};
+
 /// One argument of a scalar function call
 #[derive(Clone, Debug)]
 pub enum Arg {
@@ -103,12 +109,16 @@ impl ArgType {
         })
     }
 
-    fn arg(self, n: usize) -> BoxedStrategy<(FieldRef, Arg)> {
-        let field = match self.non_nullable {
+    /// The field, nullable three times in four when the type allows both
+    fn field(self) -> BoxedStrategy<(FieldRef, GeneratorType)> {
+        match self.non_nullable {
             Some(nn) => prop_oneof![3 => Just(self.nullable), 1 => Just(nn)].boxed(),
             None => Just(self.nullable).boxed(),
-        };
-        field
+        }
+    }
+
+    fn arg(self, n: usize) -> BoxedStrategy<(FieldRef, Arg)> {
+        self.field()
             .prop_flat_map(move |(f, t)| {
                 let rows = array(&t, n, ValueDomain::Logical).prop_map(Arg::Array);
                 let scalar = array(&t, 1, ValueDomain::Logical).prop_map(Arg::Scalar);

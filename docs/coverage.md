@@ -147,4 +147,6 @@ Each downstream project is tested through an adapter crate in this repository, a
 
 On DataFusion `main` at 926901f90 with arrow-rs `main` at 9ffd63d528, every function passed 2,000 cases on 2026-10-30, with the known-bug filters on. The filter for [apache/datafusion#26949](https://github.com/apache/datafusion/issues/26949) discards 78% of the cases `lpad` and `rpad` draw, because most generated lengths add up past `i32::MAX`. `round` discards 27% as outside the laws, because a scalar `decimal_places` changes its return type.
 
+The adapter also checks three model-free laws for DataFusion's physical expressions: broadcast, row by row, and split, as [Downstream adapters](design.md#datafusion) describes. `CASE` is covered with and without a base expression, with `THEN` types of every physical kind including lists and structs, and its cases reach all six of its evaluation methods. Every `CASE` test passed seeds 1 to 3 at 2,000 cases each on DataFusion `main` at 926901f90 with arrow-rs `main` at 9ffd63d528, on 2026-11-05, with no discards.
+
 iceberg-rust has no adapter yet. Its partition transforms are defined exactly by the Iceberg spec, so their properties would compare each output row with the spec's definition computed from the oracle's values, and the array path with the single-value `Datum` path.

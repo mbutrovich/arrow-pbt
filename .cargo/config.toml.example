@@ -24,3 +24,4 @@ arrow-string = { path = "/path/to/arrow-rs/arrow-string" }
 datafusion-common = { path = "/path/to/datafusion/datafusion/common" }
 datafusion-expr = { path = "/path/to/datafusion/datafusion/expr" }
 datafusion-functions = { path = "/path/to/datafusion/datafusion/functions" }
+datafusion-physical-expr = { path = "/path/to/datafusion/datafusion/physical-expr" }

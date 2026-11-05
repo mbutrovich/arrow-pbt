@@ -28,6 +28,7 @@ arrow-string = "60"
 datafusion-common = "=55.1.0"
 datafusion-expr = "=55.1.0"
 datafusion-functions = "=55.1.0"
+datafusion-physical-expr = "=55.1.0"
 # Same declaration as arrow-rs/parquet/Cargo.toml
 proptest = { version = "1.0", default-features = false, features = ["std"] }
 
@@ -52,6 +53,7 @@ arrow-string = { git = "https://github.com/apache/arrow-rs", rev = "9ffd63d528e9
 datafusion-common = { git = "https://github.com/apache/datafusion", rev = "926901f9001977e85df617b96328801b42f6af4a" }
 datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "926901f9001977e85df617b96328801b42f6af4a" }
 datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "926901f9001977e85df617b96328801b42f6af4a" }
+datafusion-physical-expr = { git = "https://github.com/apache/datafusion", rev = "926901f9001977e85df617b96328801b42f6af4a" }
 
 [package]
 name = "arrow-pbt"
