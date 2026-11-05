@@ -20,8 +20,9 @@ use crate::{ArgType, fail};
 /// Builds an expression from its operands, which come in the order of the
 /// case's fields, and the schema of the batch it will see. The row-by-row
 /// law passes a schema with no fields, since every operand is then a literal
-pub type Build =
-    dyn Fn(Vec<Arc<dyn PhysicalExpr>>, &Schema) -> datafusion_common::Result<Arc<dyn PhysicalExpr>>;
+pub type Build = dyn Fn(Vec<Arc<dyn PhysicalExpr>>, &Schema) -> datafusion_common::Result<Arc<dyn PhysicalExpr>>
+    + Send
+    + Sync;
 
 /// One operand of an expression
 #[derive(Clone, Debug)]
@@ -169,7 +170,7 @@ pub fn exprs(signatures: &[Vec<DataType>]) -> Result<BoxedStrategy<ExprCase>, St
 /// use datafusion_physical_expr::PhysicalExpr;
 /// use datafusion_physical_expr::expressions::not;
 /// let build = |ops: Vec<Arc<dyn PhysicalExpr>>, _: &Schema| not(Arc::clone(&ops[0]));
-/// let strategy = exprs(&[vec![DataType::Boolean]]).unwrap();
+/// let strategy = || exprs(&[vec![DataType::Boolean]]).unwrap();
 /// check("not", strategy, |case| check_expr_broadcast(&build, &case));
 /// ```
 pub fn check_expr_broadcast(build: &Build, case: &ExprCase) -> Result<(), TestCaseError> {
@@ -256,7 +257,7 @@ pub fn check_expr_broadcast(build: &Build, case: &ExprCase) -> Result<(), TestCa
 /// use datafusion_physical_expr::PhysicalExpr;
 /// use datafusion_physical_expr::expressions::not;
 /// let build = |ops: Vec<Arc<dyn PhysicalExpr>>, _: &Schema| not(Arc::clone(&ops[0]));
-/// let strategy = exprs(&[vec![DataType::Boolean]]).unwrap();
+/// let strategy = || exprs(&[vec![DataType::Boolean]]).unwrap();
 /// check("not", strategy, |case| check_expr_row_by_row(&build, &case));
 /// ```
 pub fn check_expr_row_by_row(build: &Build, case: &ExprCase) -> Result<(), TestCaseError> {
@@ -333,7 +334,7 @@ pub fn check_expr_row_by_row(build: &Build, case: &ExprCase) -> Result<(), TestC
 /// use datafusion_physical_expr::PhysicalExpr;
 /// use datafusion_physical_expr::expressions::not;
 /// let build = |ops: Vec<Arc<dyn PhysicalExpr>>, _: &Schema| not(Arc::clone(&ops[0]));
-/// let strategy = exprs(&[vec![DataType::Boolean]]).unwrap();
+/// let strategy = || exprs(&[vec![DataType::Boolean]]).unwrap();
 /// check("not", strategy, |case| check_expr_split(&build, &case));
 /// ```
 pub fn check_expr_split(build: &Build, case: &ExprCase) -> Result<(), TestCaseError> {

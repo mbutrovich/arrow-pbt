@@ -31,7 +31,10 @@ use proptest::test_runner::TestCaseError;
 /// Checks the three laws for the expressions `build` makes, on operands of
 /// the types of one of `signatures`
 fn laws(name: &str, build: &Build, signatures: &[Vec<DataType>]) {
-    let cases = exprs(signatures).unwrap_or_else(|e| panic!("{name}: {e}"));
+    if let Err(e) = exprs(signatures) {
+        panic!("{name}: {e}");
+    }
+    let cases = || exprs(signatures).expect("checked above");
     check(name, cases, |case: ExprCase| {
         check_expr_broadcast(build, &case)?;
         check_expr_row_by_row(build, &case)?;
@@ -186,7 +189,10 @@ fn in_signatures(t: &DataType) -> Vec<Vec<DataType>> {
 /// Checks the three laws for `IN` on operands of the types of one of
 /// `signatures`, as `IN` or `NOT IN`, which each case draws
 fn in_laws(name: &str, signatures: &[Vec<DataType>]) {
-    let cases = (exprs(signatures).unwrap(), any::<bool>());
+    if let Err(e) = exprs(signatures) {
+        panic!("{name}: {e}");
+    }
+    let cases = || (exprs(signatures).expect("checked above"), any::<bool>());
     check(name, cases, |(case, negated): (ExprCase, bool)| {
         let build = in_of(negated);
         check_expr_broadcast(&build, &case)?;
@@ -367,7 +373,7 @@ fn finds_broken_expressions() {
                     mode,
                 }))
             };
-        let cases = exprs(&[vec![DataType::Int64]]).unwrap();
+        let cases = || exprs(&[vec![DataType::Int64]]).unwrap();
         let found = catch_unwind(AssertUnwindSafe(|| {
             check("broken", cases, |case: ExprCase| law(&build, &case));
         }));

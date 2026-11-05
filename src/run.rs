@@ -8,6 +8,8 @@
 //! - `ARROW_PBT_FULL`: when set, print messages and inputs without truncation
 //! - `ARROW_PBT_NO_KNOWN`: when set, fail instead of discarding known bugs
 //!   (see [`crate::known`])
+//! - `ARROW_PBT_THREADS`: the most seeds that run at once across every check
+//!   in the process, the available parallelism by default
 //!
 //! A value that does not parse is an error rather than a fallback to the
 //! default. The same seed and case count always give the same cases, and a
@@ -18,18 +20,23 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::env::{VarError, var_os};
 use std::fmt::Debug;
+use std::num::NonZero;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
+use std::thread::{available_parallelism, scope};
 use std::time::Instant;
 
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, TestRng, TestRunner};
 
-/// Runs `test` on cases from `strategy` for each seed in `ARROW_PBT_SEEDS`,
-/// and panics on the first failure with its message, the shrunk input, and
-/// the settings that rerun it. A test that panics fails with the panic's
-/// message. A run that discards too many cases fails too, since it checked
-/// too little
+/// Runs `test` on cases from the strategy `strategy` builds, for each seed
+/// in `ARROW_PBT_SEEDS`, and panics on the lowest failing seed with its
+/// message, the shrunk input, and the settings that rerun it. Seeds run in
+/// parallel, so each worker builds its own strategy and `test` must be
+/// `Sync`. A test that panics fails with the panic's message. A run that
+/// discards too many cases fails too, since it checked too little
 ///
 /// # Example
 ///
@@ -37,25 +44,25 @@ use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, Test
 /// use arrow_pbt::generator::{GeneratorType, ValueDomain, array};
 /// use arrow_pbt::run::check;
 /// use arrow_pbt::val::check_rows;
-/// check("built", array(&GeneratorType::Utf8, 10, ValueDomain::Arrow), |g| {
+/// check("built", || array(&GeneratorType::Utf8, 10, ValueDomain::Arrow), |g| {
 ///     check_rows(&g.build(), &g.ty.data_type(), &g.rows)
 /// });
 /// ```
-pub fn check<T, S, F>(name: &str, strategy: S, test: F)
+pub fn check<T, S, F>(name: &str, strategy: impl Fn() -> S + Sync, test: F)
 where
     T: Debug + Clone,
     S: Strategy<Value = T>,
-    F: Fn(T) -> Result<(), TestCaseError>,
+    F: Fn(T) -> Result<(), TestCaseError> + Sync,
 {
     check_with(name, |seed, cases, shrink| {
-        run(&strategy, &test, seed, cases, shrink)
+        run(&strategy(), &test, seed, cases, shrink)
     });
 }
 
 /// `check` for a runner given as a function of the seed, the cases and the
 /// shrink steps
 #[doc(hidden)]
-pub fn check_with(name: &str, run_seed: impl Fn(u64, u32, u32) -> Outcome) {
+pub fn check_with(name: &str, run_seed: impl Fn(u64, u32, u32) -> Outcome + Sync) {
     let settings = || -> Result<_, String> {
         Ok((
             env("ARROW_PBT_CASES", 256)?,
@@ -64,10 +71,52 @@ pub fn check_with(name: &str, run_seed: impl Fn(u64, u32, u32) -> Outcome) {
         ))
     };
     let (cases, shrink, seed_list) = settings().unwrap_or_else(|e| panic!("{e}"));
+    check_seeds(name, &seed_list, cases, shrink, pool(), run_seed);
+}
+
+/// Runs `run_seed` for each of `seeds` on `pool`, and panics on the lowest
+/// failing seed. Once a seed fails, no higher seed starts, so the failure
+/// reported does not depend on which worker finished first
+fn check_seeds(
+    name: &str,
+    seeds: &[u64],
+    cases: u32,
+    shrink: u32,
+    pool: &Pool,
+    run_seed: impl Fn(u64, u32, u32) -> Outcome + Sync,
+) {
+    let next = AtomicUsize::new(0);
+    let lowest_failed = AtomicUsize::new(usize::MAX);
+    let outcomes: Vec<OnceLock<Outcome>> = seeds.iter().map(|_| OnceLock::new()).collect();
+    scope(|s| {
+        for _ in 0..seeds.len().min(pool.size) {
+            s.spawn(|| {
+                loop {
+                    // Seeds are taken in order, so every seed below the
+                    // lowest failure has started
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= seeds.len() || i > lowest_failed.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let o = pool.run(|| {
+                        // A panic outside a case, such as in a strategy, is
+                        // this seed's failure, with its message
+                        catch_unwind(AssertUnwindSafe(|| run_seed(seeds[i], cases, shrink)))
+                            .unwrap_or_else(|p| Outcome::panicked(&*p))
+                    });
+                    if o.failed {
+                        lowest_failed.fetch_min(i, Ordering::Relaxed);
+                    }
+                    let _ = outcomes[i].set(o);
+                }
+            });
+        }
+    });
     // Cargo sets the package name when it runs a test
     let package = std::env::var("CARGO_PKG_NAME").map_or(String::new(), |p| format!(" -p {p}"));
-    for seed in seed_list {
-        let o = run_seed(seed, cases, shrink);
+    for (&seed, o) in seeds.iter().zip(outcomes) {
+        // Seeds above the lowest failure did not run
+        let Some(o) = o.into_inner() else { break };
         if var_os("ARROW_PBT_REASONS").is_some() {
             for (why, c) in &o.reasons {
                 eprintln!("{name} seed {seed}: {c} discarded: {why}");
@@ -84,6 +133,59 @@ pub fn check_with(name: &str, run_seed: impl Fn(u64, u32, u32) -> Outcome) {
             })
         );
     }
+}
+
+/// A limit on the seeds running at once, shared by every check in the
+/// process, so that tests running in parallel do not oversubscribe the cores
+struct Pool {
+    size: usize,
+    free: Mutex<usize>,
+    freed: Condvar,
+}
+
+impl Pool {
+    fn new(size: usize) -> Self {
+        Self {
+            size,
+            free: Mutex::new(size),
+            freed: Condvar::new(),
+        }
+    }
+
+    /// Runs `f` once a worker is free
+    fn run<R>(&self, f: impl FnOnce() -> R) -> R {
+        let mut free = self.free.lock().unwrap_or_else(PoisonError::into_inner);
+        while *free == 0 {
+            free = self
+                .freed
+                .wait(free)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *free -= 1;
+        drop(free);
+        // Freed on drop, so a panic in `f` frees it too
+        struct Taken<'a>(&'a Pool);
+        impl Drop for Taken<'_> {
+            fn drop(&mut self) {
+                *self.0.free.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+                self.0.freed.notify_one();
+            }
+        }
+        let _taken = Taken(self);
+        f()
+    }
+}
+
+/// The pool every check in the process shares, of `ARROW_PBT_THREADS`
+/// workers
+fn pool() -> &'static Pool {
+    static POOL: OnceLock<Pool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        // Without a count from the OS, run on one thread rather than fail
+        let default = available_parallelism().map_or(1, NonZero::get);
+        let size: usize = env("ARROW_PBT_THREADS", default).unwrap_or_else(|e| panic!("{e}"));
+        Pool::new(size.max(1))
+    })
 }
 
 /// The command that reruns `name` on `seed`, with each setting that is set
@@ -120,6 +222,21 @@ pub struct Outcome {
     pub discards: usize,
     /// Discards by reason
     pub reasons: BTreeMap<String, usize>,
+}
+
+impl Outcome {
+    fn panicked(p: &(dyn Any + Send)) -> Self {
+        Self {
+            failed: true,
+            cases_to_fail: None,
+            execs: 0,
+            message: format!("panic: {}", panic_message(p)),
+            minimal: String::new(),
+            ms: 0.0,
+            discards: 0,
+            reasons: BTreeMap::new(),
+        }
+    }
 }
 
 /// Runs `test` on `cases` inputs from `strategy`, with a fixed seed and
@@ -250,7 +367,97 @@ pub fn caught(body: impl FnOnce() -> Result<(), TestCaseError>) -> Result<(), Te
 
 #[cfg(test)]
 mod tests {
-    use super::rerun;
+    use std::collections::BTreeMap;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread::{scope, sleep};
+    use std::time::Duration;
+
+    use super::{Outcome, Pool, check_seeds, rerun};
+
+    fn outcome(failed: bool) -> Outcome {
+        Outcome {
+            failed,
+            cases_to_fail: failed.then_some(1),
+            execs: 1,
+            message: if failed {
+                "broken".to_string()
+            } else {
+                String::new()
+            },
+            minimal: String::new(),
+            ms: 0.0,
+            discards: 0,
+            reasons: BTreeMap::new(),
+        }
+    }
+
+    /// The failure reported is the lowest failing seed, even when a higher
+    /// one fails first
+    #[test]
+    fn reports_the_lowest_failing_seed() {
+        let r = catch_unwind(AssertUnwindSafe(|| {
+            check_seeds(
+                "p",
+                &[1, 2, 3, 4, 5, 6],
+                10,
+                0,
+                &Pool::new(4),
+                |seed, _, _| {
+                    if seed == 3 {
+                        sleep(Duration::from_millis(200));
+                    }
+                    outcome(seed == 3 || seed == 6)
+                },
+            );
+        }));
+        let message = r.err().unwrap().downcast::<String>().unwrap();
+        assert!(message.contains("with seed 3 "), "{message}");
+    }
+
+    /// Seeds run on as many threads as the limit allows, and no more
+    #[test]
+    fn runs_seeds_in_parallel_up_to_the_limit() {
+        let running = AtomicUsize::new(0);
+        let most = AtomicUsize::new(0);
+        check_seeds(
+            "p",
+            &[1, 2, 3, 4, 5, 6, 7, 8],
+            10,
+            0,
+            &Pool::new(3),
+            |_, _, _| {
+                let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                most.fetch_max(now, Ordering::SeqCst);
+                sleep(Duration::from_millis(50));
+                running.fetch_sub(1, Ordering::SeqCst);
+                outcome(false)
+            },
+        );
+        assert_eq!(most.load(Ordering::SeqCst), 3);
+    }
+
+    /// Checks running at once share the pool's limit, as tests do when the
+    /// harness runs them in parallel
+    #[test]
+    fn checks_share_the_limit() {
+        let pool = Pool::new(3);
+        let running = AtomicUsize::new(0);
+        let most = AtomicUsize::new(0);
+        let seed = |_, _, _| {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            sleep(Duration::from_millis(50));
+            running.fetch_sub(1, Ordering::SeqCst);
+            outcome(false)
+        };
+        scope(|s| {
+            for name in ["a", "b"] {
+                s.spawn(|| check_seeds(name, &[1, 2, 3, 4, 5, 6], 10, 0, &pool, seed));
+            }
+        });
+        assert_eq!(most.load(Ordering::SeqCst), 3);
+    }
 
     #[test]
     fn rerun_carries_the_switches_that_are_set() {

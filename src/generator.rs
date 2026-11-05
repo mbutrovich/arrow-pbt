@@ -24,7 +24,7 @@ use arrow_data::{ArrayData, BufferSpec, layout};
 use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef, UnionFields, UnionMode};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Signed, ToPrimitive, Zero};
-use proptest::collection::vec;
+use proptest::collection::{SizeRange, vec};
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::strategy::ValueTree;
@@ -1289,8 +1289,21 @@ pub(crate) fn numeric_text() -> BoxedStrategy<String> {
         .boxed()
 }
 
-fn bytes(n: BoxedStrategy<usize>) -> BoxedStrategy<Vec<u8>> {
-    n.prop_flat_map(|n| vec(prop_oneof![Just(0u8), Just(255u8), any::<u8>()], n))
+/// `len` bytes, each 0, 255 or any byte with equal odds
+fn bytes(len: impl Into<SizeRange>) -> BoxedStrategy<Vec<u8>> {
+    // One u16 per byte, its value mod 3 choosing 0, 255 or its high byte. A
+    // union per byte and a flat_map over the length made a Binary row cost
+    // 5 times a Utf8 row
+    vec(any::<u16>(), len)
+        .prop_map(|v| {
+            v.into_iter()
+                .map(|x| match x % 3 {
+                    0 => 0,
+                    1 => 255,
+                    _ => (x >> 8) as u8,
+                })
+                .collect()
+        })
         .boxed()
 }
 
@@ -1392,15 +1405,15 @@ pub(crate) fn value(t: &GeneratorType) -> BoxedStrategy<Val> {
                 .boxed()
         }
         GeneratorType::Binary | GeneratorType::LargeBinary => {
-            bytes((0..=30usize).boxed()).prop_map(Val::Bytes).boxed()
+            bytes(0..=30usize).prop_map(Val::Bytes).boxed()
         }
         GeneratorType::BinaryView => prop_oneof![
-            3 => bytes((0..=30usize).boxed()),
+            3 => bytes(0..=30usize),
             1 => select(LONG_STRINGS.to_vec()).prop_map(|s| s.as_bytes().to_vec()),
         ]
         .prop_map(Val::Bytes)
         .boxed(),
-        GeneratorType::Fsb(w) => bytes(Just(w as usize).boxed()).prop_map(Val::Bytes).boxed(),
+        GeneratorType::Fsb(w) => bytes(w as usize).prop_map(Val::Bytes).boxed(),
         GeneratorType::List(c)
         | GeneratorType::LargeList(c)
         | GeneratorType::ListView(c)

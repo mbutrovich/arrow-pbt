@@ -149,7 +149,7 @@ impl ArgType {
 /// use arrow_pbt_datafusion::{calls, check_broadcast};
 /// use arrow_schema::DataType;
 /// use datafusion_functions::math::abs;
-/// let strategy = calls(&[vec![DataType::Int32]]).unwrap();
+/// let strategy = || calls(&[vec![DataType::Int32]]).unwrap();
 /// check("abs", strategy, |call| check_broadcast(&abs(), &call));
 /// ```
 pub fn check_broadcast(udf: &ScalarUDF, call: &Call) -> Result<(), TestCaseError> {
@@ -209,7 +209,7 @@ pub fn check_broadcast(udf: &ScalarUDF, call: &Call) -> Result<(), TestCaseError
 /// use arrow_pbt_datafusion::{calls, check_row_by_row};
 /// use arrow_schema::DataType;
 /// use datafusion_functions::math::abs;
-/// let strategy = calls(&[vec![DataType::Int32]]).unwrap();
+/// let strategy = || calls(&[vec![DataType::Int32]]).unwrap();
 /// check("abs", strategy, |call| check_row_by_row(&abs(), &call));
 /// ```
 pub fn check_row_by_row(udf: &ScalarUDF, call: &Call) -> Result<(), TestCaseError> {

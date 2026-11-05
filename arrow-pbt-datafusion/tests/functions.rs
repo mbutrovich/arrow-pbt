@@ -39,8 +39,8 @@ fn laws_with(
     name: &str,
     udf: &ScalarUDF,
     signatures: &[Vec<DataType>],
-    before: impl Fn(&Call) -> Result<(), TestCaseError>,
-    after: impl Fn(&Call, TestCaseError) -> TestCaseError,
+    before: impl Fn(&Call) -> Result<(), TestCaseError> + Sync,
+    after: impl Fn(&Call, TestCaseError) -> TestCaseError + Sync,
 ) {
     for types in signatures {
         let fields: Vec<FieldRef> = types
@@ -54,7 +54,10 @@ fn laws_with(
             .collect();
         assert_eq!(&coerced, types, "{name}: coercion changes {types:?}");
     }
-    let cases = calls(signatures).unwrap();
+    if let Err(e) = calls(signatures) {
+        panic!("{name}: {e}");
+    }
+    let cases = || calls(signatures).expect("checked above");
     check(name, cases, |call| {
         before(&call)?;
         caught(|| {
@@ -496,7 +499,7 @@ fn finds_broken_functions() {
         ),
     ] {
         let udf = Broken::udf(mode);
-        let cases = calls(&[vec![DataType::Int64]]).unwrap();
+        let cases = || calls(&[vec![DataType::Int64]]).unwrap();
         let found = catch_unwind(AssertUnwindSafe(|| {
             check("broken", cases, |call| law(&udf, &call));
         }));

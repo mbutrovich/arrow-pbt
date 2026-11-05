@@ -19,7 +19,7 @@
 //! use arrow_pbt::run::check;
 //! use arrow_pbt::val::{check_rows, vals};
 //!
-//! check("slice", array_of(all_types()), |g| {
+//! check("slice", || array_of(all_types()), |g| {
 //!     let a = g.build();
 //!     let v = vals(a.as_ref());
 //!     for start in 0..=a.len() {

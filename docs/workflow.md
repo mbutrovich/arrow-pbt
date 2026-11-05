@@ -2,13 +2,13 @@
 
 ## Running regularly
 
-A nightly run against arrow-rs `main` and DataFusion `main` finds bugs within a day of the merge that introduced them. Point `.cargo/config.toml` at up-to-date checkouts of both and run many cases. A seed taken from the date explores new cases each night and is easy to replay:
+A nightly run against arrow-rs `main` and DataFusion `main` finds bugs within a day of the merge that introduced them. Point `.cargo/config.toml` at up-to-date checkouts of both and run many cases, spread over many seeds so that every core has work. Seeds taken from the date explore new cases each night and are easy to replay:
 
 ```sh
 git -C /path/to/arrow-rs pull
 git -C /path/to/datafusion pull
-ARROW_PBT_REASONS=1 cargo run -q -- run all $(date +%Y%m%d) 100000 > nightly-$(date +%F).tsv
-ARROW_PBT_SEEDS=$(date +%Y%m%d) ARROW_PBT_CASES=100000 cargo test -p arrow-pbt-datafusion
+ARROW_PBT_REASONS=1 cargo run -q -- run all $(date +%Y%m%d)00-$(date +%Y%m%d)99 1000 > nightly-$(date +%F).tsv
+ARROW_PBT_SEEDS=$(date +%Y%m%d)00-$(date +%Y%m%d)99 ARROW_PBT_CASES=1000 cargo test -p arrow-pbt-datafusion
 ```
 
 The binary runs arrow-rs's properties, and `cargo test` runs an adapter's. When DataFusion `main` does not build on arrow-rs `main`, delete DataFusion's entries from `.cargo/config.toml` to keep it on its pinned commit, or skip the second run.

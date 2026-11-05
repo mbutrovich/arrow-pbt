@@ -69,10 +69,10 @@ Every property in the workspace, arrow-rs's and the adapters', goes through one 
 | `ARROW_PBT_REASONS`  | Print discards by reason when set                              | unset                     | both         |
 | `ARROW_PBT_NO_KNOWN` | Fail instead of discarding known bugs when set                 | unset                     | both         |
 | `ARROW_PBT_FULL`     | Print messages and inputs without truncation when set          | unset                     | both         |
-| `ARROW_PBT_THREADS`  | Workers                                                        | the available parallelism | the binary   |
+| `ARROW_PBT_THREADS`  | Seeds that run at once                                         | the available parallelism | both         |
 | `ARROW_PBT_PANICS`   | Print panics as they happen when set, such as in the generator | unset                     | the binary   |
 
-The binary takes the seeds, cases and shrink steps as arguments instead, and `cargo test` takes its workers from `RUST_TEST_THREADS`.
+The binary takes the seeds, cases and shrink steps as arguments instead. Under `cargo test`, every test hands its seeds to one pool of `ARROW_PBT_THREADS` workers, so a run with many seeds keeps every core busy, and `RUST_TEST_THREADS` only sets how many tests start at once. A seed is the smallest unit of work, so the seeds of one test run in parallel but the cases of one seed do not.
 
 A value that does not parse, such as `ARROW_PBT_CASES=1e5`, is an error rather than a fallback to the default. A run that discards too many cases fails too.
 
@@ -94,15 +94,15 @@ On a machine with performance and efficiency cores, set `ARROW_PBT_THREADS` to t
 
 ## Run sizes
 
-A case costs 11.5 ms of CPU on average in a debug build, from 0.4 ms for `kleene` to 51 ms for `coalesce`. Debug builds keep Rust's overflow checks, which found two of the bugs. The binary runs one property and seed per worker, so wall time is about the total CPU time divided by the workers.
+A case costs 6.3 ms of CPU on average in a debug build, from 0.4 ms for `kleene` to 27 ms for `coalesce`. Debug builds keep Rust's overflow checks, which found two of the bugs. The binary and `cargo test` both run one property and seed per worker, so wall time is about the total CPU time divided by the workers, as long as there are more seeds than workers. A long run therefore uses many seeds rather than many cases per seed.
 
 | Use                                    | Cases per property and seed | Seeds |
 | -------------------------------------- | --------------------------- | ----- |
 | Quick check (the test default)         | 256                         | 1     |
 | Checking a refactor                    | 1,000                       | 3     |
-| Nightly, or before an arrow-rs release | 100,000                     | 1     |
+| Nightly, or before an arrow-rs release | 1,000                       | 100   |
 
-At the average cost above, every property at the nightly size takes about 14 hours of CPU time. Most bugs appeared within 3,000 cases per property. One needed about 24,000.
+At the average cost above, every property at the nightly size takes about 8 hours of CPU time. Most bugs appeared within 3,000 cases per property. One needed about 24,000.
 
 ## Layout
 
