@@ -411,9 +411,12 @@ fn retype_data(d: ArrayData, dt: &DataType) -> ArrayData {
         .collect();
     let builder = d.into_builder().data_type(dt.clone()).child_data(children);
     // SAFETY: the buffers, offsets, lengths and nulls are unchanged, and `dt`
-    // has the same layout as the old type. Nulls only appear where `dt`
-    // allows them, because `from_field` makes every non-nullable field's
-    // type `NotNull`. `retype` validates the result in debug builds
+    // differs from the old type only in child field names, nullability and
+    // metadata, of which only nullability affects validity. arrow-rs's safe
+    // constructors checked the nulls when the generator built `d`, against
+    // fields that forbid nulls wherever `dt`'s do, because `from_field` makes
+    // each non-nullable field's type `NotNull`. `retype` validates the result
+    // in debug builds
     unsafe { builder.build_unchecked() }
 }
 
