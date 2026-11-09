@@ -5,7 +5,6 @@
 use arrow_array::{ArrayRef, Datum, Scalar};
 use arrow_schema::{DataType, IntervalUnit, TimeUnit};
 
-use crate::known::known;
 use crate::props::Operands;
 use crate::props::R;
 use crate::props::{check_in, fail, interval_fields};
@@ -234,16 +233,8 @@ fn round_ns(x: f64) -> f64 {
 /// 30 days a month and 86,400 seconds a day, never up, in DuckDB's order of
 /// operations. A product above `i32::MAX` is out of range,
 /// as in DuckDB. apache/arrow-rs#10409 settles the rest: an integral factor
-/// multiplies exactly, and rounding is ties-to-even at nanosecond precision.
-/// With `fracts`, the fraction of the day product is added to the fraction
-/// of the month remainder instead, as arrow-rs adds them
-fn interval_mul_f64(
-    months: i32,
-    days: i32,
-    ns: i64,
-    f: f64,
-    fracts: bool,
-) -> Option<(i32, i32, i64)> {
+/// multiplies exactly, and rounding is ties-to-even at nanosecond precision
+fn interval_mul_f64(months: i32, days: i32, ns: i64, f: f64) -> Option<(i32, i32, i64)> {
     if !f.is_finite() {
         return None;
     }
@@ -260,10 +251,7 @@ fn interval_mul_f64(
     }
     let (rm, mut rd) = (m.trunc() as i32, d.trunc() as i32);
     let month_days = round_ns((f64::from(months) * f - f64::from(rm)) * 30.0);
-    let day_fraction = match fracts {
-        true => d.fract() + month_days.fract(),
-        false => f64::from(days) * f - f64::from(rd) + month_days - month_days.trunc(),
-    };
+    let day_fraction = f64::from(days) * f - f64::from(rd) + month_days - month_days.trunc();
     let mut secs = round_ns(day_fraction * 86_400.0);
     if secs.abs() >= 86_400.0 {
         let carry = (secs / 86_400.0).trunc();
@@ -278,38 +266,9 @@ fn interval_mul_f64(
     Some((rm, rd, t as i64))
 }
 
-/// Known: arrow-rs adds the fraction of the day product to the fraction of
-/// the month remainder, where DuckDB adds the month remainder and then takes
-/// its whole days away. Floating-point addition is not associative, so a
-/// row can differ from DuckDB's in the last place of its nanoseconds. The
-/// signature is a row that equals `interval_mul_f64` with `fracts`. Found
-/// by this harness on main at 9ffd63d528 (apache/arrow-rs#12004)
-const FRACTS: &str = "known: interval mul by Float64 sums the day fractions in another order than DuckDB (apache/arrow-rs#12004)";
-
-/// `want`, with the rows of `out` that equal `fracts` in their place, and
-/// whether there were any
-fn with_fracts(out: &ArrayRef, want: Vec<Val>, fracts: &[Option<Val>]) -> (Vec<Val>, bool) {
-    let got = vals(out.as_ref());
-    let mut any = false;
-    let want = want
-        .into_iter()
-        .zip(got)
-        .zip(fracts)
-        .map(|((w, g), a)| match a {
-            Some(a) if g == *a && g != w => {
-                any = true;
-                g
-            }
-            _ => w,
-        })
-        .collect();
-    (want, any)
-}
-
 /// `mul` of an interval by an `Int64`, either way round, multiplies each
 /// field exactly, and an overflow is an error. `mul` of a `MonthDayNano`
-/// interval by a `Float64`, either way round, follows `interval_mul_f64`
-/// without `fracts`.
+/// interval by a `Float64`, either way round, follows `interval_mul_f64`.
 /// `div` by a `Float64` multiplies by its reciprocal, as apache/arrow-rs#10409
 /// settles, and division by zero is an error. A row is null when either
 /// input row is, and a row that fails makes the whole call an error
@@ -342,33 +301,29 @@ pub fn interval_scale((iv, factor, operands): IntervalScaleCase) -> R {
                 .collect(),
         )
     };
-    // A row's result, and for a `Float64` factor the row in arrow-rs's order
-    // of the day fractions
-    let expect = |i: usize, divide: bool| -> (Row, Option<Val>) {
+    let expect = |i: usize, divide: bool| -> Row {
         let (x, k) = (at_i(i), at_f(i));
         if *x == Val::Null || *k == Val::Null {
-            return (Row::Value(Val::Null), None);
+            return Row::Value(Val::Null);
         }
         let Val::Raw(b) = x else { unreachable!() };
         let f = interval_fields(b);
         if float {
             let k = k.as_f64();
-            let r = |fracts| match divide {
+            let r = match divide {
                 true if k == 0.0 => None,
-                true => interval_mul_f64(f[0] as i32, f[1] as i32, f[2], 1.0 / k, fracts),
-                false => interval_mul_f64(f[0] as i32, f[1] as i32, f[2], k, fracts),
+                true => interval_mul_f64(f[0] as i32, f[1] as i32, f[2], 1.0 / k),
+                false => interval_mul_f64(f[0] as i32, f[1] as i32, f[2], k),
             };
-            let v = |(m, d, t): (i32, i32, i64)| encode(&[m as i128, d as i128, t as i128]);
-            return (
-                r(false).map_or(Row::Overflow, |x| Row::Value(v(x))),
-                r(true).map(v),
-            );
+            return r.map_or(Row::Overflow, |(m, d, t)| {
+                Row::Value(encode(&[m as i128, d as i128, t as i128]))
+            });
         }
         let r = int(k);
         let p: Vec<i128> = f.iter().map(|&v| v as i128 * r).collect();
         match p.iter().zip(widths).all(|(p, w)| fits(*p, *w)) {
-            true => (Row::Value(encode(&p)), None),
-            false => (Row::Overflow, None),
+            true => Row::Value(encode(&p)),
+            false => Row::Overflow,
         }
     };
     type Op = fn(&dyn Datum, &dyn Datum) -> Result<ArrayRef, ArrowError>;
@@ -396,13 +351,9 @@ pub fn interval_scale((iv, factor, operands): IntervalScaleCase) -> R {
         forms.push(("div", div, false, true));
     }
     let len = if left { m } else { n };
-    // Whether a row matched the known bug. The case is discarded only after
-    // every other row and form is checked
-    let mut fracts_seen = false;
     for (name, op, swap, divide) in forms {
         let ctx = |m: String| fail(format!("{name} of {dt} and {}: {m}", factor.data_type()));
-        let (rows, fracts): (Vec<Row>, Vec<Option<Val>>) =
-            (0..len).map(|i| expect(i, divide)).unzip();
+        let rows: Vec<Row> = (0..len).map(|i| expect(i, divide)).collect();
         let must_fail = rows.iter().any(|r| matches!(r, Row::Overflow));
         match call(op, swap, 0, len) {
             Ok(_) if must_fail => return Err(ctx("expected an error, got a result".into())),
@@ -415,9 +366,7 @@ pub fn interval_scale((iv, factor, operands): IntervalScaleCase) -> R {
                         _ => unreachable!(),
                     })
                     .collect();
-                let (want, off) = with_fracts(&out, want, &fracts);
                 check_rows(&out, &dt, &want).map_err(|e| ctx(format!("{e:?}")))?;
-                fracts_seen |= off;
             }
             // One failing row fails the call, so every row is checked alone
             Err(_) => {
@@ -428,9 +377,7 @@ pub fn interval_scale((iv, factor, operands): IntervalScaleCase) -> R {
                         (Ok(_), Row::Overflow) => return Err(at("expected an error".into())),
                         (Err(e), _) => return Err(at(format!("unexpected error {e}"))),
                         (Ok(out), Row::Value(v)) => {
-                            let (want, off) = with_fracts(&out, vec![v], &fracts[i..i + 1]);
-                            check_rows(&out, &dt, &want).map_err(|e| at(format!("{e:?}")))?;
-                            fracts_seen |= off;
+                            check_rows(&out, &dt, &[v]).map_err(|e| at(format!("{e:?}")))?;
                         }
                         (Ok(_), Row::Open) => {}
                     }
@@ -438,10 +385,7 @@ pub fn interval_scale((iv, factor, operands): IntervalScaleCase) -> R {
             }
         }
     }
-    match fracts_seen {
-        true => Err(known(FRACTS)),
-        false => Ok(()),
-    }
+    Ok(())
 }
 
 /// `add`, `sub` and their wrapping forms on temporal types against the

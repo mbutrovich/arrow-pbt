@@ -98,12 +98,10 @@ fn decimal_scalar_no_rows(call: &Call, e: TestCaseError) -> TestCaseError {
 /// it, and the oracle copies every row
 const BUDGET: u128 = 64 << 20;
 
-// `repeat` on `LargeUtf8` caps its result at `i64::MAX` bytes, so a result
-// that passes the cap but no allocation can satisfy aborts the process. An
-// abort cannot be caught, so `repeat_before` checks the result's size before
-// the call: over `i32::MAX` bytes, where `Utf8` and `Utf8View` return an
-// error. Found by this harness on DataFusion main at 926901f90
-// (apache/datafusion#26948)
+// `repeat` returns an error for a result over `i32::MAX` bytes on `Utf8` and
+// `Utf8View`, and over `u32::MAX` bytes on `LargeUtf8`, before it allocates.
+// Up to that cap it allocates the whole result, so `repeat_before` discards a
+// result over the budget before the call
 fn repeat_before(call: &Call) -> Result<(), TestCaseError> {
     let row = |a: &Arg, i: usize| match a {
         Arg::Array(g) => g.rows[i].clone(),
@@ -124,16 +122,13 @@ fn repeat_before(call: &Call) -> Result<(), TestCaseError> {
         })
         .collect();
     let total: u128 = bytes.iter().sum();
-    let utf8_max = i32::MAX as u128;
-    if call.fields[0].data_type() == &DataType::LargeUtf8 && total > utf8_max {
-        return Err(known(
-            "known: repeat on LargeUtf8 aborts on a result no allocation can satisfy (apache/datafusion#26948)",
-        ));
-    }
-    // Over `i32::MAX` bytes, `Utf8` and `Utf8View` return an error before they
-    // allocate, so only results up to that size are costly. The row-by-row
-    // law calls each row on its own, so a costly row counts too
-    let costly = |b: u128| b > BUDGET && b <= utf8_max;
+    let cap = match call.fields[0].data_type() {
+        DataType::LargeUtf8 => u32::MAX as u128,
+        _ => i32::MAX as u128,
+    };
+    // Only results up to the cap are allocated. The row-by-row law calls each
+    // row on its own, so a costly row counts too
+    let costly = |b: u128| b > BUDGET && b <= cap;
     if costly(total) || bytes.into_iter().any(costly) {
         return Err(TestCaseError::reject(
             "outside the budget: a result over 64 MiB",

@@ -9,9 +9,8 @@ use proptest::test_runner::TestCaseError;
 
 use crate::props::R;
 use crate::props::can_hold_null;
-use crate::props::{check_in, fail, known_panic};
+use crate::props::{check_in, fail, known_key_overflow, known_panic};
 use crate::run::{caught, panic_message};
-use crate::types::{any_type, is_view_dict};
 use crate::val::check_rows;
 use crate::val::{Val, vals};
 use arrow_schema::DataType;
@@ -113,12 +112,9 @@ fn check_concatenated(schema: &SchemaRef, out: &[RecordBatch], expected: &[Vec<V
     Ok(())
 }
 
-/// Known failure, by signature: dictionaries of views are not merged, so
-/// their keys overflow (apache/arrow-rs#10925)
+/// Known failures, by signature: a dictionary key overflow that
+/// `known_key_overflow` matches
 fn known(r: R, schema: &SchemaRef, indices: bool) -> R {
-    let any =
-        |f: &dyn Fn(&DataType) -> bool| schema.fields().iter().any(|x| any_type(x.data_type(), f));
-    let view_dict = any(&is_view_dict);
     let no_null = schema
         .fields()
         .iter()
@@ -133,13 +129,11 @@ fn known(r: R, schema: &SchemaRef, indices: bool) -> R {
             ))
         }
         Err(TestCaseError::Fail(m))
-            if view_dict
-                && m.to_string()
-                    .contains("Dictionary key bigger than the key type") =>
+            if m.to_string()
+                .contains("Dictionary key bigger than the key type") =>
         {
-            Err(crate::known::known(
-                "known: dictionaries of views are not merged, so keys overflow (apache/arrow-rs#10925)",
-            ))
+            let columns = DataType::Struct(schema.fields().clone());
+            Err(known_key_overflow(&columns).unwrap_or(TestCaseError::Fail(m)))
         }
         r => r,
     }
@@ -357,8 +351,7 @@ fn coalesce_body((schema, batches, target, biggest): CoalesceCase) -> R {
             expected[c].extend(rows);
         }
         pushed += n;
-        // A known bug's panic in any column, such as `interleave` of a list
-        // view of dictionaries (apache/arrow-rs#11620), is discarded
+        // A known bug's panic in any column is discarded
         let r = catch_unwind(AssertUnwindSafe(|| match &push {
             Push::Plain => co.push_batch(b),
             Push::Filter(m) => co.push_batch_with_filter(b, m),

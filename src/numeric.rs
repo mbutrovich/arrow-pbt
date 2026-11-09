@@ -18,7 +18,7 @@ use proptest::test_runner::TestCaseError;
 use std::cell::Cell;
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
-use crate::known::{known, tolerated};
+use crate::known::tolerated;
 use crate::props::R;
 use crate::props::decimal_scale;
 use crate::props::interval_fields;
@@ -1034,28 +1034,16 @@ fn decimal_precision<T: DecimalType>(a: &ArrayRef, p: u8, p1: u8, s1: i8) -> R {
     let limit = pow10(i32::from(p));
     let fits_p = |x: &Val| *x != Val::Null && big(&dt, x).abs() < limit;
     let arr = a.as_primitive::<T>();
-    // A known bug is discarded after the rest of the case is checked
-    let mut known_bug = None;
 
     // A scale above the precision is an invalid type, as
     // `validate_decimal_precision_and_scale` documents
     let valid = s0 <= i32::from(p) && v.iter().all(|x| *x == Val::Null || fits_p(x));
-    match arr.validate_decimal_precision(p) {
-        // Its check of the precision against the scale casts a negative
-        // scale to u8. Found by this harness on main at 9ffd63d528
-        // (apache/arrow-rs#12095)
-        Err(e) if s0 < 0 && e.to_string().contains("is less than scale -") => {
-            known_bug = Some(
-                "known: validate_decimal_precision rejects every negative scale (apache/arrow-rs#12095)",
-            );
-        }
-        r if r.is_ok() != valid => {
-            return Err(fail(format!(
-                "validate_decimal_precision({p}) on {dt}: {r:?}, expected {}",
-                if valid { "Ok" } else { "an error" }
-            )));
-        }
-        _ => {}
+    let r = arr.validate_decimal_precision(p);
+    if r.is_ok() != valid {
+        return Err(fail(format!(
+            "validate_decimal_precision({p}) on {dt}: {r:?}, expected {}",
+            if valid { "Ok" } else { "an error" }
+        )));
     }
 
     let out = arr.null_if_overflow_precision(p);
@@ -1101,7 +1089,7 @@ fn decimal_precision<T: DecimalType>(a: &ArrayRef, p: u8, p1: u8, s1: i8) -> R {
             )));
         }
     }
-    known_bug.map_or(Ok(()), |why| Err(known(why)))
+    Ok(())
 }
 
 /// Decimals format as `format_decimal` documents, through

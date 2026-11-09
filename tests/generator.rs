@@ -5,10 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::cast::AsArray;
-use arrow_array::types::{
-    Decimal32Type, Decimal64Type, Decimal128Type, Decimal256Type, DecimalType,
-};
-use arrow_array::{Array, ArrayRef, make_array};
+use arrow_array::types::{Decimal32Type, Decimal64Type, Decimal128Type, Decimal256Type};
+use arrow_array::{Array, make_array};
 use arrow_data::{ArrayData, BufferSpec, layout};
 use arrow_pbt::generator::{
     GeneratedArray, GeneratorType, ValueDomain, all_types, array, batch, batches, build, len, rows,
@@ -449,23 +447,21 @@ fn values_at_the_minimum_alignment() {
 fn within_precision(d: &ArrayData) -> Result<(), ArrowError> {
     let a = make_array(d.clone());
     match d.data_type() {
-        DataType::Decimal32(p, _) => fits::<Decimal32Type>(&a, *p)?,
-        DataType::Decimal64(p, _) => fits::<Decimal64Type>(&a, *p)?,
-        DataType::Decimal128(p, _) => fits::<Decimal128Type>(&a, *p)?,
-        DataType::Decimal256(p, _) => fits::<Decimal256Type>(&a, *p)?,
+        DataType::Decimal32(p, _) => a
+            .as_primitive::<Decimal32Type>()
+            .validate_decimal_precision(*p)?,
+        DataType::Decimal64(p, _) => a
+            .as_primitive::<Decimal64Type>()
+            .validate_decimal_precision(*p)?,
+        DataType::Decimal128(p, _) => a
+            .as_primitive::<Decimal128Type>()
+            .validate_decimal_precision(*p)?,
+        DataType::Decimal256(p, _) => a
+            .as_primitive::<Decimal256Type>()
+            .validate_decimal_precision(*p)?,
         _ => {}
     }
     d.child_data().iter().try_for_each(within_precision)
-}
-
-/// Whether every valid value of `a` fits precision `p`. It checks each value
-/// on its own because `PrimitiveArray::validate_decimal_precision` rejects
-/// every array with a negative scale (apache/arrow-rs#12095)
-fn fits<T: DecimalType>(a: &ArrayRef, p: u8) -> Result<(), ArrowError> {
-    let a = a.as_primitive::<T>();
-    a.iter()
-        .flatten()
-        .try_for_each(|v| T::validate_decimal_precision(v, p, a.scale()))
 }
 
 /// Decimal types on their own, and inside the types whose layouts fill

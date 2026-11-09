@@ -31,10 +31,10 @@ pub(crate) fn kernel_err(
     probe: impl Fn(&ArrayRef) -> Result<ArrayRef, ArrowError>,
 ) -> TestCaseError {
     let msg = e.to_string();
-    if msg.contains("Dictionary key bigger than the key type") && any_type(dt, &is_view_dict) {
-        return known(
-            "known: dictionaries of views are not merged, so keys overflow (apache/arrow-rs#10925)",
-        );
+    if msg.contains("Dictionary key bigger than the key type")
+        && let Some(k) = known_key_overflow(dt)
+    {
+        return k;
     }
     let unsupported = matches!(e, ArrowError::NotYetImplemented(_))
         || msg.to_lowercase().contains("not supported")
@@ -127,27 +127,37 @@ pub(crate) fn guarded(
 /// The discard for a panic that is a known bug's on arrays of `dt`, or else
 /// the failure
 pub(crate) fn known_panic(dt: &DataType, msg: &str) -> TestCaseError {
-    if msg.contains("DictionaryKeyOverflowError") && any_type(dt, &is_view_dict) {
-        return known(
-            "known: dictionaries of views are not merged, so keys overflow (apache/arrow-rs#10925)",
-        );
+    match msg.contains("DictionaryKeyOverflowError") {
+        true => known_key_overflow(dt),
+        false => None,
     }
-    // interleave of a list view copies its child with MutableArrayData::new,
-    // which concatenates dictionaries without merging them and panics when
-    // the key type overflows. A dictionary anywhere below the list view
-    // reaches it. Found by this harness on main at 152f0d33c
+    .unwrap_or_else(|| fail(format!("panic: {msg}")))
+}
+
+/// The discard for a dictionary key overflow, as a panic or an error, that
+/// is a known bug's on arrays of `dt`
+pub(crate) fn known_key_overflow(dt: &DataType) -> Option<TestCaseError> {
+    if any_type(dt, &is_view_dict) {
+        return Some(known(
+            "known: dictionaries of views are not merged, so keys overflow (apache/arrow-rs#10925)",
+        ));
+    }
+    // interleave of a list view copies its child with MutableArrayData, which
+    // concatenates dictionaries without merging them, so the keys overflow.
+    // A dictionary anywhere below the list view reaches it. It panicked until
+    // apache/arrow-rs#11912 made MutableArrayData::try_new fallible, and is
+    // an error since. Found by this harness on main at 152f0d33c
     // (apache/arrow-rs#11620)
     let is_dict = |d: &DataType| matches!(d, DataType::Dictionary(..));
     let is_list_view_of_dict = |d: &DataType| {
         matches!(d, DataType::ListView(c) | DataType::LargeListView(c)
             if any_type(c.data_type(), &is_dict))
     };
-    if msg.contains("DictionaryKeyOverflowError") && any_type(dt, &is_list_view_of_dict) {
-        return known(
-            "known: interleave of a list view of dictionaries panics on key overflow (apache/arrow-rs#11620)",
-        );
-    }
-    fail(format!("panic: {msg}"))
+    any_type(dt, &is_list_view_of_dict).then(|| {
+        known(
+            "known: interleave of a list view does not merge its dictionaries, so keys overflow (apache/arrow-rs#11620)",
+        )
+    })
 }
 
 /// Whether an array of `dt` can hold a null at its top level. A union holds

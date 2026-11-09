@@ -43,7 +43,7 @@ dependencies = [
 [[package]]
 name = "arrow"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-arith",
  "arrow-array",
@@ -63,7 +63,7 @@ dependencies = [
 [[package]]
 name = "arrow-arith"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -76,7 +76,7 @@ dependencies = [
 [[package]]
 name = "arrow-array"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "ahash",
  "arrow-buffer",
@@ -95,7 +95,7 @@ dependencies = [
 [[package]]
 name = "arrow-buffer"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "bytes",
  "half",
@@ -106,7 +106,7 @@ dependencies = [
 [[package]]
 name = "arrow-cast"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -127,7 +127,7 @@ dependencies = [
 [[package]]
 name = "arrow-cmp"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -137,7 +137,7 @@ dependencies = [
 [[package]]
 name = "arrow-csv"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-cast",
@@ -151,7 +151,7 @@ dependencies = [
 [[package]]
 name = "arrow-data"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -163,7 +163,7 @@ dependencies = [
 [[package]]
 name = "arrow-ipc"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -178,7 +178,7 @@ dependencies = [
 [[package]]
 name = "arrow-json"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -202,7 +202,7 @@ dependencies = [
 [[package]]
 name = "arrow-ord"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -253,7 +253,7 @@ dependencies = [
 [[package]]
 name = "arrow-row"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -265,7 +265,7 @@ dependencies = [
 [[package]]
 name = "arrow-schema"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "bitflags",
  "serde_core",
@@ -275,7 +275,7 @@ dependencies = [
 [[package]]
 name = "arrow-select"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -289,7 +289,7 @@ dependencies = [
 [[package]]
 name = "arrow-string"
 version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=9ffd63d528e924d9c0faceef0027e3766b615c98#9ffd63d528e924d9c0faceef0027e3766b615c98"
+source = "git+https://github.com/apache/arrow-rs?rev=30c5c3287cd5b99ca9aa0aec57509d076eb07347#30c5c3287cd5b99ca9aa0aec57509d076eb07347"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -508,12 +508,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-common"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "arrow-ipc",
  "arrow-schema",
+ "arrow-select",
  "chrono",
  "foldhash 0.2.0",
  "half",
@@ -530,13 +531,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-doc"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 
 [[package]]
 name = "datafusion-execution"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "arrow-buffer",
@@ -560,8 +561,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-expr"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -582,8 +583,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-expr-common"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -593,8 +594,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "arrow-buffer",
@@ -621,8 +622,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-aggregate-common"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -632,8 +633,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-window-common"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "datafusion-common",
  "datafusion-physical-expr-common",
@@ -641,8 +642,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-macros"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "datafusion-doc",
  "quote",
@@ -651,8 +652,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-expr"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -673,8 +674,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-expr-common"
-version = "55.1.0"
-source = "git+https://github.com/apache/datafusion?rev=926901f9001977e85df617b96328801b42f6af4a#926901f9001977e85df617b96328801b42f6af4a"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=14b3edd9a350b983fae6d2f194df1a3ae343ba15#14b3edd9a350b983fae6d2f194df1a3ae343ba15"
 dependencies = [
  "arrow",
  "chrono",
