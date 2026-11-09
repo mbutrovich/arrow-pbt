@@ -130,7 +130,9 @@ fn repeat_before(call: &Call) -> Result<(), TestCaseError> {
     // row on its own, so a costly row counts too. With only scalar arguments,
     // `repeat` checks the cap against one row, and when that row is within
     // it the harness broadcasts the scalar result to every row, so the whole
-    // total is allocated
+    // total is allocated. Past `i32::MAX` bytes that broadcast panics in
+    // `ScalarValue::to_array_of_size` for `Utf8` (apache/datafusion#27277),
+    // through `GenericByteArray::new_repeated` (apache/arrow-rs#12143)
     let costly = |b: u128| b > BUDGET && b <= cap;
     let broadcast = all_scalar && total > BUDGET && bytes.iter().all(|&b| b <= cap);
     if costly(total) || broadcast || bytes.into_iter().any(costly) {
@@ -240,6 +242,44 @@ fn floor() {
         &types,
         |_| Ok(()),
         decimal_scalar_no_rows,
+    );
+}
+
+// `split_part`'s fast path for an array string with a scalar delimiter and
+// position rejects position 0 before it reads a row, while the array path
+// skips rows with a NULL argument. So with no non-NULL string, only the fast
+// path fails. Found by this harness on DataFusion main at 14b3edd9a3
+// (apache/datafusion#27276)
+fn split_part_zero(call: &Call, e: TestCaseError) -> TestCaseError {
+    let fast_path_zero = match &call.args[..] {
+        [Arg::Array(s), Arg::Scalar(d), Arg::Scalar(p)] => {
+            s.rows.iter().all(|v| *v == Val::Null)
+                && d.rows[0] != Val::Null
+                && p.rows[0] == Val::I64(0)
+        }
+        _ => false,
+    };
+    match &e {
+        TestCaseError::Fail(m)
+            if fast_path_zero && m.to_string().contains("field position must not be zero") =>
+        {
+            known(
+                "known: split_part rejects position 0 on a scalar position before reading a row (apache/datafusion#27276)",
+            )
+        }
+        _ => e,
+    }
+}
+
+#[test]
+fn split_part() {
+    let types = per_string(|s| vec![s.clone(), s, Int64]);
+    laws_with(
+        "split_part",
+        &string::split_part(),
+        &types,
+        |_| Ok(()),
+        split_part_zero,
     );
 }
 
@@ -357,7 +397,6 @@ law_tests! {
     concat: string::concat(), [repeated(&strings(), 2), repeated(&strings(), 3)].concat();
     concat_ws: string::concat_ws(), repeated(&strings(), 3);
     replace: string::replace(), repeated(&strings(), 3);
-    split_part: string::split_part(), per_string(|s| vec![s.clone(), s, Int64]);
     starts_with: string::starts_with(), repeated(&strings(), 2);
     ends_with: string::ends_with(), repeated(&strings(), 2);
     contains: string::contains(), repeated(&strings(), 2);

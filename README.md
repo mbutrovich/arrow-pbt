@@ -4,7 +4,7 @@
 
 Property-based tests for [arrow-rs](https://github.com/apache/arrow-rs) and the projects built on it. One generator produces valid Arrow arrays of every type in every physical layout the Arrow format allows. An independent oracle reads any array into plain values. Short properties check the compute kernels against both. A failing case shrinks to a small input and reports the seed that reproduces it.
 
-The properties and the generator's tests have found 44 bugs: 40 in arrow-rs `main`, one in atoi, which arrow-cast uses to parse integers, and three in DataFusion `main`. Each was reported with a reproduction or linked to an existing issue. 26 of the 44 are fixed. [docs/known-bugs.md](docs/known-bugs.md) lists them.
+The properties and the generator's tests have found 47 bugs: 41 in arrow-rs `main`, one in atoi, which arrow-cast uses to parse integers, and five in DataFusion `main`. Each was reported with a reproduction or linked to an existing issue. 26 of the 47 are fixed. [docs/known-bugs.md](docs/known-bugs.md) lists them.
 
 arrow-pbt is an independent project. It is not part of Apache Arrow, and the Apache Software Foundation does not endorse it.
 
