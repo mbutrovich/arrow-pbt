@@ -127,9 +127,13 @@ fn repeat_before(call: &Call) -> Result<(), TestCaseError> {
         _ => i32::MAX as u128,
     };
     // Only results up to the cap are allocated. The row-by-row law calls each
-    // row on its own, so a costly row counts too
+    // row on its own, so a costly row counts too. With only scalar arguments,
+    // `repeat` checks the cap against one row, and when that row is within
+    // it the harness broadcasts the scalar result to every row, so the whole
+    // total is allocated
     let costly = |b: u128| b > BUDGET && b <= cap;
-    if costly(total) || bytes.into_iter().any(costly) {
+    let broadcast = all_scalar && total > BUDGET && bytes.iter().all(|&b| b <= cap);
+    if costly(total) || broadcast || bytes.into_iter().any(costly) {
         return Err(TestCaseError::reject(
             "outside the budget: a result over 64 MiB",
         ));
