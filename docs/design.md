@@ -92,6 +92,16 @@ The names in parentheses are the standard ones, from John Hughes' ["How to Speci
 - **Round trips** ("there and back again"). IPC, FFI and `ArrayData` preserve values.
 - **Valid output** (invariants, or "some things never change"). Every output passes `validate_full` and the spec checker, whatever its values.
 
+## Compared with other tests
+
+**Unit tests.** arrow-rs's unit tests check inputs that a contributor chose against results written by hand. They are where a regression test belongs, and they reach inputs that rule 7 keeps out of the generator, such as an input sized to one implementation's block size. A property checks one claim on thousands of generated inputs, and the oracle computes each expected result, so nobody writes the expected output.
+
+**Randomized tests.** [`fuzz_filter`](https://github.com/apache/arrow-rs/blob/4f1ed42f7a1fb76d090ec1351cfdb6e904f59f0b/arrow-select/src/filter.rs#L2271-L2358) checks `filter` against a model on 100 random cases of `Int32`, strings, and string dictionaries, sliced at offsets below 10. Its random number generator has no fixed seed, so a failure cannot be rerun, and nothing shrinks it. [`create_random_array`](https://github.com/apache/arrow-rs/blob/4f1ed42f7a1fb76d090ec1351cfdb6e904f59f0b/arrow/src/util/data_gen.rs#L53-L190) generates arrays for arrow-rs's benchmarks and some parquet tests from [seed 42](https://github.com/apache/arrow-rs/blob/4f1ed42f7a1fb76d090ec1351cfdb6e904f59f0b/arrow/src/util/test_util.rs#L21-L23). It never slices an array, and it returns an error for unions and list views. arrow-pbt's generator reaches the layouts in [What the generator varies](#what-the-generator-varies), any seed reproduces its cases, and shrinking reduces a failure.
+
+**Coverage-guided fuzzing.** A fuzzer such as cargo-fuzz mutates bytes to reach new branches and reports crashes. To find a wrong result, it needs a decoder from bytes to valid arrays and a harness that knows the right answer. arrow-rs has no fuzz targets. arrow-pbt builds valid arrays by construction and checks every result, not only whether the kernel crashed. It does not measure branch coverage. Mutation testing and `arrow-pbt inventory` measure what it reaches instead.
+
+**What each catches.** Of the 1,348 mutants of `arrow-select` that compiled, the properties caught 930 (69.0%), `cargo test -p arrow-select` caught 1,009 (74.9%), and the two together caught 1,098 (81.5%). Each catches bugs the other misses. [tools/mutation/README.md](../tools/mutation/README.md) has the per-file counts and classifies the mutants that only the tests catch. The bugs in [known-bugs.md](known-bugs.md) are the other measure, since each was in code that its project's own tests passed.
+
 ## Downstream adapters
 
 A project built on arrow-rs, such as DataFusion or iceberg-rust, is tested through an adapter: a crate in this repository that connects this crate to the project. An adapter has four parts:
