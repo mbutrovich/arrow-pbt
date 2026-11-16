@@ -11,11 +11,13 @@ use proptest::sample::select;
 
 use crate::batches::{CoalesceCase, InterleaveBatches};
 use crate::generator::value_types;
+use crate::generator::{Domain, narrow, narrower, near_powers, spread, within};
 use crate::generator::{
     GeneratedArray, GeneratorType, ValueDomain, all_types, array, array_of, batch, build, indices,
     len, mask, rows, schemas, seed,
 };
 use crate::numeric::FixedPointCase;
+use crate::numeric::{DivisorCase, DivisorType};
 use crate::order::SortCase;
 use crate::props::{Interleave, Operands};
 use crate::temporal::IntervalScaleCase;
@@ -28,6 +30,8 @@ use arrow_array::RecordBatchOptions;
 use arrow_schema::DataType;
 use arrow_schema::SchemaRef;
 use arrow_schema::SortOptions;
+use num_bigint::BigInt;
+use num_traits::Zero;
 use proptest::sample::Index;
 use std::mem::discriminant;
 
@@ -1165,5 +1169,69 @@ pub fn slice_slice() -> BoxedStrategy<(ArrayRef, usize, usize, usize, usize)> {
     slice()
         .prop_flat_map(|(a, o1, l1)| (Just(a), Just(o1), Just(l1), 0..=l1))
         .prop_flat_map(|(a, o1, l1, o2)| (Just(a), Just(o1), Just(l1), Just(o2), 0..=l1 - o2))
+        .boxed()
+}
+
+/// A divisor type, a nonzero divisor, and up to 64 dividends. A quarter of
+/// the dividends are within one of a multiple of the divisor, where the
+/// quotient steps
+pub fn divisor() -> BoxedStrategy<DivisorCase> {
+    use DivisorType::*;
+    select(vec![U32, U64, I32, I64, I128, I256])
+        .prop_flat_map(|ty| {
+            let d = integer(&ty.domain()).prop_filter("a divisor is nonzero", |d| !d.is_zero());
+            (Just(ty), d)
+        })
+        .prop_flat_map(|(ty, d)| {
+            let dom = ty.domain();
+            let n = prop_oneof![3 => integer(&dom), 1 => near_multiple(&dom, &d)];
+            (Just(ty), Just(d), vec(n, 0..=64))
+        })
+        .prop_map(|(ty, d, ns)| DivisorCase { ty, d, ns })
+        .boxed()
+}
+
+/// An integer of `dom`: an edge, within one of a power of two or ten, a
+/// value that fits a narrower width, or any bit length
+fn integer(dom: &Domain) -> BoxedStrategy<BigInt> {
+    let edge = select(edges(dom)).boxed();
+    let near = select(near_powers(dom)).boxed();
+    let widths = narrower(dom);
+    if widths.is_empty() {
+        return prop_oneof![edge, near, spread(dom.clone())].boxed();
+    }
+    let d = dom.clone();
+    let narrow_value = select(widths).prop_flat_map(move |b| within(narrow(&d, b)));
+    prop_oneof![1 => edge, 2 => near, 1 => narrow_value, 2 => spread(dom.clone())].boxed()
+}
+
+/// 0, 1, -1, and the limits of `dom` and of each narrower width, with the
+/// negation of each lower limit. The divisors' rustdoc names `MIN / -1` and
+/// `MIN / 2^(N - 1)` of a narrower width, and `near_powers` holds too many
+/// values to draw them often
+fn edges(dom: &Domain) -> Vec<BigInt> {
+    let mut v: Vec<BigInt> = [0, 1, -1].into_iter().map(BigInt::from).collect();
+    for b in narrower(dom) {
+        let n = narrow(dom, b);
+        v.extend([-&n.lo, n.lo, n.hi]);
+    }
+    v.extend([-&dom.lo, dom.lo.clone(), dom.hi.clone()]);
+    v.retain(|x| &dom.lo <= x && x <= &dom.hi);
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// `q * d - 1`, `q * d` or `q * d + 1`, for a quotient `q` that keeps the
+/// product within `dom`, clamped to `dom`
+fn near_multiple(dom: &Domain, d: &BigInt) -> BoxedStrategy<BigInt> {
+    let (a, b) = (&dom.lo / d, &dom.hi / d);
+    let quotients = Domain {
+        lo: a.clone().min(b.clone()),
+        hi: a.max(b),
+    };
+    let (dom, d) = (dom.clone(), d.clone());
+    (integer(&quotients), -1..=1i32)
+        .prop_map(move |(q, e)| (q * &d + e).clamp(dom.lo.clone(), dom.hi.clone()))
         .boxed()
 }

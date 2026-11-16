@@ -158,6 +158,7 @@ pub fn all_properties() -> Vec<Entry> {
         entry("neg", "neg", cases::neg, numeric::neg_prop),
         entry("arity", "arity", cases::arity, numeric::arity_prop),
         entry("bitwise", "arity", cases::arity, numeric::bitwise_prop),
+        entry("divisor", "divisor", cases::divisor, numeric::divisor_prop),
         entry(
             "aggregate",
             "aggregate",

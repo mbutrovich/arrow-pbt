@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::batches::case_arrays;
 use crate::batches::{CoalesceCase, InterleaveBatches};
+use crate::numeric::DivisorCase;
 use crate::order::SortCase;
 use crate::props::Operands;
 use crate::run::seeded_runner;
@@ -145,6 +146,12 @@ impl Inputs for (BooleanArray, ArrayRef, ArrayRef, bool, bool) {
 impl Inputs for (ArrayRef, ArrayRef, bool, i64, Option<u64>) {
     fn arrays(&self) -> Vec<ArrayRef> {
         vec![self.0.clone(), self.1.clone()]
+    }
+}
+
+impl Inputs for DivisorCase {
+    fn arrays(&self) -> Vec<ArrayRef> {
+        vec![]
     }
 }
 
