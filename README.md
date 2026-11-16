@@ -140,6 +140,22 @@ The library's public API is `generator`, `val`, `spec`, `types`, `known` and `ru
 - [docs/coverage.md](docs/coverage.md): every arrow-rs entry point, what covers it, and what was measured.
 - [CONTRIBUTING.md](CONTRIBUTING.md): the checks to run before a pull request, and where to report a bug the properties find.
 
+## AI Disclosure
+
+I wrote this project with help from Claude. I understand and support its design, the generator, the oracle, the properties, and the adapters.
+
+## Reporting bugs upstream
+
+A failing property is the start of a bug report, not the report itself. I follow these rules for every bug filed from this project, and I ask anyone who uses it to do the same:
+
+- Reduce the failure by hand to a minimal reproduction, and run it against upstream `main`.
+- Search for an existing issue before filing a new one.
+- Review every report before filing it, whoever or whatever drafted it.
+- Take ownership of the issue once it is filed. Fix it yourself if you can. If someone else fixes it, steward the fix: answer the maintainers' questions, review the pull request, and rerun the property without its filter once the fix lands.
+- Write a fix's tests the way the project writes its own. A minimal reproduction shows one failing input, but a regression test should cover the class of inputs the bug affects, in the project's own test format, such as a unit test next to the kernel in arrow-rs or a sqllogictest case in DataFusion.
+
+[When a property fails](docs/workflow.md#when-a-property-fails) and [When a fix lands upstream](docs/workflow.md#when-a-fix-lands-upstream) describe the steps.
+
 ## License
 
 Apache-2.0, as arrow-rs.

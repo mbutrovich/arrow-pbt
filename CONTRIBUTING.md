@@ -2,7 +2,7 @@
 
 ## Reporting a bug the properties find
 
-A bug in arrow-rs, or in a project an adapter tests, goes to that project's issue tracker, not to this repository. [When a property fails](docs/workflow.md#when-a-property-fails) says how to decide whose bug it is, how to reduce the case to a reproduction, and what the issue needs. Once the issue is filed, [Keeping the bug from hiding others](docs/workflow.md#keeping-the-bug-from-hiding-others) says how to filter it here.
+A bug in arrow-rs, or in a project an adapter tests, goes to that project's issue tracker, not to this repository. Follow [Reporting bugs upstream](README.md#reporting-bugs-upstream) in the README, which asks you to review each report before filing it and to own the issue until a fix lands. [When a property fails](docs/workflow.md#when-a-property-fails) says how to decide whose bug it is, how to reduce the case to a reproduction, and what the issue needs. Once the issue is filed, [Keeping the bug from hiding others](docs/workflow.md#keeping-the-bug-from-hiding-others) says how to filter it here.
 
 Issues and pull requests in this repository are for arrow-pbt itself: a property that is wrong, a gap in the generator, or a new property or adapter.
 
