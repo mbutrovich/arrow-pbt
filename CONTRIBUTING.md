@@ -10,6 +10,34 @@ Issues and pull requests in this repository are for arrow-pbt itself: a property
 
 [Adding a property](docs/workflow.md#adding-a-property) and [Adding an adapter](docs/workflow.md#adding-an-adapter) give the steps. [The rules](docs/design.md#rules) in the design say what keeps a property's results meaningful, such as checking an oracle by breaking it on purpose.
 
+## Layout
+
+| Path                                  | Contents                                                                                                                                                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/generator.rs`                    | The generator: types, logical rows, and the physical layout chosen by a seed                                                                                                                               |
+| `src/val.rs`                          | The oracle: any array as a tree of logical values                                                                                                                                                          |
+| `src/spec.rs`                         | The checker of the Arrow columnar format                                                                                                                                                                   |
+| `src/cases.rs`                        | Input strategies for each kernel                                                                                                                                                                           |
+| `src/props.rs`                        | The shared runner, and `take`, `filter`, `interleave`, `concat`, `shift`, `union_extract`, `slice`, `eq`, `data_ops`, `cmp`, `sort`, `cast`, `arith`, `bools`, the `law_*` properties, and the round trips |
+| `src/batches.rs`                      | `coalesce`, `concat_batches`, `interleave_record_batch` and `take_record_batch`                                                                                                                            |
+| `src/logic.rs`                        | `is_null`, `kleene`, `merge`, `merge_n`, `nullif` and `zip`                                                                                                                                                |
+| `src/numeric.rs`                      | `aggregate`, `arity`, `bitwise`, `decimal_format`, `decimal_precision`, `fixed_point` and `neg`                                                                                                            |
+| `src/order.rs`                        | `lexsort` and `row_format`                                                                                                                                                                                 |
+| `src/strings.rs`                      | `cast_text`, `length` and `string_ops`                                                                                                                                                                     |
+| `src/temporal.rs`                     | `interval_scale`, `temporal_arith` and `temporal_cast`                                                                                                                                                     |
+| `src/known.rs`                        | The known-bug discard and its switch                                                                                                                                                                       |
+| `src/registry.rs`                     | Every property with its strategy, and the runners                                                                                                                                                          |
+| `src/coverage.rs`, `src/inventory.rs` | Measurements of what the generator produces                                                                                                                                                                |
+| `src/main.rs`                         | The `arrow-pbt` binary for long runs and reports                                                                                                                                                           |
+| `tests/properties.rs`                 | One `#[test]` per property                                                                                                                                                                                 |
+| `tests/cli.rs`                        | Tests of the binary's `list` and `help` commands                                                                                                                                                           |
+| `tests/generator.rs`                  | Tests of the generator's conversion from a `DataType` or `Field`, and of where it places values buffers                                                                                                    |
+| `arrow-pbt-datafusion/`               | The DataFusion adapter (`src/lib.rs`, `src/expr.rs`), its laws for DataFusion's scalar functions (`tests/functions.rs`), and for its physical expressions (`tests/exprs.rs`)                               |
+| `docs/`                               | Running, design, workflow, known bugs, and coverage                                                                                                                                                        |
+| `tools/mutation/`                     | Mutation testing scripts and the arrow-select results                                                                                                                                                      |
+
+The library's public API is `generator`, `val`, `spec`, `types`, `known` and `run`, and `cargo doc --open` shows it with an example for each item. The other modules are internal to this crate's tests and binary.
+
 ## Checks before a pull request
 
 ```sh

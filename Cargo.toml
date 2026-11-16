@@ -7,7 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/mbutrovich/arrow-pbt"
 
 # The arrow-rs version under test, for every crate here. `[patch.crates-io]`
-# below replaces these with a commit of arrow-rs `main` (see README.md)
+# below replaces these with a commit of arrow-rs `main` (see docs/running.md)
 [workspace.dependencies]
 arrow-arith = "60"
 arrow-array = { version = "60", features = ["ffi", "chrono-tz"] }
@@ -21,7 +21,7 @@ arrow-schema = "60"
 arrow-select = "60"
 arrow-string = "60"
 # DataFusion, for the DataFusion adapter. `[patch.crates-io]` below replaces
-# these with a commit of DataFusion `main` (see README.md). The requirement is
+# these with a commit of DataFusion `main` (see docs/running.md). The requirement is
 # exact, and must match the version in that commit, because crates.io has
 # DataFusion releases of the same major version on an older arrow. With a
 # looser one, a patch Cargo cannot use falls back to them with only a warning

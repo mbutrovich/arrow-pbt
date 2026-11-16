@@ -1,21 +1,6 @@
 # Workflow
 
-## Running regularly
-
-A nightly run against arrow-rs `main` and DataFusion `main` finds bugs within a day of the merge that introduced them. Point `.cargo/config.toml` at up-to-date checkouts of both and run many cases, spread over many seeds so that every core has work. Seeds taken from the date explore new cases each night and are easy to replay:
-
-```sh
-git -C /path/to/arrow-rs pull
-git -C /path/to/datafusion pull
-ARROW_PBT_REASONS=1 cargo run -q -- run all $(date +%Y%m%d)00-$(date +%Y%m%d)99 1000 > nightly-$(date +%F).tsv
-ARROW_PBT_SEEDS=$(date +%Y%m%d)00-$(date +%Y%m%d)99 ARROW_PBT_CASES=1000 cargo test -p arrow-pbt-datafusion
-```
-
-The binary runs arrow-rs's properties, and `cargo test` runs an adapter's. When DataFusion `main` does not build on arrow-rs `main`, delete DataFusion's entries from `.cargo/config.toml` to keep it on its pinned commit, or skip the second run.
-
-On macOS, prefix a long run with `caffeinate -i`, so that idle sleep does not pause it.
-
-Before merging a risky change to arrow-rs, run the properties for the touched crate against the branch with a large case count. For example, a change to decimal division would run `arith,cast,fixed_point,decimal_format`. For a change to a DataFusion function, point `.cargo/config.toml` at the branch and run that function's test with `ARROW_PBT_CASES` in the thousands, such as `cargo test -p arrow-pbt-datafusion lpad`.
+This guide is for maintaining and extending arrow-pbt: triaging a failure, filtering a known bug and removing the filter when the fix lands, moving the commits under test, and adding properties and adapters. [running.md](running.md) covers running the properties.
 
 ## When a property fails
 
@@ -98,7 +83,7 @@ The rows must match on whether each property failed, the cases it ran, and its d
 
 For arrow-rs:
 
-1. Write the property in the module that holds the properties most like it, which [Layout](../README.md#layout) in the README lists. Compute the expected output from the oracle (`val::vals`), call the kernel, and check the output with `val::check_rows`, which validates it and compares its values.
+1. Write the property in the module that holds the properties most like it, which [Layout](../CONTRIBUTING.md#layout) lists. Compute the expected output from the oracle (`val::vals`), call the kernel, and check the output with `val::check_rows`, which validates it and compares its values.
 2. Give it a strategy in `src/cases.rs` that covers the kernel's documented domain, using the shared generator.
 3. Register it in `src/registry.rs` and add a `#[test]` in `tests/properties.rs`.
 4. Break the oracle on purpose a few ways and confirm the property fails each time. Build each broken copy into its own binary and compare the binaries' hashes, because Cargo reuses a build when the copied sources keep their old modification times.
