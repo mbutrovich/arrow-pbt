@@ -18,7 +18,6 @@ use proptest::test_runner::TestCaseError;
 use std::cell::Cell;
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
-use crate::known::tolerated;
 use crate::props::R;
 use crate::props::decimal_scale;
 use crate::props::interval_fields;
@@ -1054,12 +1053,10 @@ fn decimal_precision<T: DecimalType>(a: &ArrayRef, p: u8, p1: u8, s1: i8) -> R {
     check_rows(&out, out.data_type(), &kept)
         .map_err(|e| fail(format!("null_if_overflow_precision({p}) on {dt}: {e:?}")))?;
     if out.data_type() != &dt {
-        // It returns the type's default precision and scale, which changes
-        // every value's meaning. It does so on every input, so discarding
-        // would discard every case (apache/arrow-rs#11300)
-        tolerated(
-            "known: null_if_overflow_precision resets the precision and scale (apache/arrow-rs#11300)",
-        )?;
+        return Err(fail(format!(
+            "null_if_overflow_precision({p}) on {dt} returned {}",
+            out.data_type()
+        )));
     }
 
     // The errors `validate_decimal_precision_and_scale` documents

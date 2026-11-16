@@ -32,9 +32,9 @@ fn laws(name: &str, udf: &ScalarUDF, signatures: &[Vec<DataType>]) {
     laws_with(name, udf, signatures, |_| Ok(()), |_, e| e);
 }
 
-/// `laws` with known-bug filters: `before` checks a call before the laws run
-/// it, for a bug that aborts the process, and `after` maps a failure to its
-/// known-bug discard
+/// `laws` with filters: `before` checks a call before the laws run it, for a
+/// bug that aborts the process or a result over the budget, and `after` maps
+/// a failure to its known-bug discard
 fn laws_with(
     name: &str,
     udf: &ScalarUDF,
@@ -68,56 +68,37 @@ fn laws_with(
     });
 }
 
-// `ceil` and `floor` turn a decimal scalar into an array of `number_rows`
-// rows and read row 0, which panics when there are no rows. Found by this
-// harness on DataFusion main at 926901f90 (apache/datafusion#26950)
-fn decimal_scalar_no_rows(call: &Call, e: TestCaseError) -> TestCaseError {
-    let decimal = matches!(
-        call.fields[0].data_type(),
-        DataType::Decimal32(..)
-            | DataType::Decimal64(..)
-            | DataType::Decimal128(..)
-            | DataType::Decimal256(..)
-    );
-    match &e {
-        TestCaseError::Fail(m)
-            if decimal
-                && call.number_rows == 0
-                && m.to_string()
-                    .contains("index 0 from a PrimitiveArray of length 0") =>
-        {
-            known(
-                "known: ceil and floor panic on a decimal scalar with no rows (apache/datafusion#26950)",
-            )
-        }
-        _ => e,
-    }
-}
-
 /// Bytes above which a result costs too much to check: the function builds
 /// it, and the oracle copies every row
 const BUDGET: u128 = 64 << 20;
+
+/// The rows a call evaluates. A call with only scalar arguments evaluates
+/// them once, even with no rows
+fn rows(call: &Call) -> usize {
+    if call.args.iter().all(|a| matches!(a, Arg::Scalar(_))) {
+        call.number_rows.max(1)
+    } else {
+        call.number_rows
+    }
+}
+
+/// Row `i` of an argument, where a scalar has the same value in every row
+fn row(a: &Arg, i: usize) -> &Val {
+    match a {
+        Arg::Array(g) => &g.rows[i],
+        Arg::Scalar(g) => &g.rows[0],
+    }
+}
 
 // `repeat` returns an error for a result over `i32::MAX` bytes on `Utf8` and
 // `Utf8View`, and over `u32::MAX` bytes on `LargeUtf8`, before it allocates.
 // Up to that cap it allocates the whole result, so `repeat_before` discards a
 // result over the budget before the call
 fn repeat_before(call: &Call) -> Result<(), TestCaseError> {
-    let row = |a: &Arg, i: usize| match a {
-        Arg::Array(g) => g.rows[i].clone(),
-        Arg::Scalar(g) => g.rows[0].clone(),
-    };
-    // A call with only scalar arguments evaluates them once, even with no
-    // rows
     let all_scalar = call.args.iter().all(|a| matches!(a, Arg::Scalar(_)));
-    let n = if all_scalar {
-        call.number_rows.max(1)
-    } else {
-        call.number_rows
-    };
-    let bytes: Vec<u128> = (0..n)
+    let bytes: Vec<u128> = (0..rows(call))
         .map(|i| match (row(&call.args[0], i), row(&call.args[1], i)) {
-            (Val::Str(s), Val::I64(k)) if k > 0 => s.len() as u128 * k as u128,
+            (Val::Str(s), Val::I64(k)) if *k > 0 => s.len() as u128 * *k as u128,
             _ => 0,
         })
         .collect();
@@ -143,15 +124,8 @@ fn repeat_before(call: &Call) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-// With an array of lengths, `lpad` and `rpad` add up the lengths as `usize`
-// to estimate their capacity before they validate any length. A negative
-// length wraps, and the sum overflows the capacity, which panics. A sum of
-// large positive lengths asks for more than any allocation can satisfy,
-// which aborts the process. The broadcast law turns a scalar length into an
-// array, so a scalar length counts once per row. Found by this harness on
-// DataFusion main at 926901f90 (apache/datafusion#26949)
-const PAD_KNOWN: &str = "known: lpad and rpad estimate their capacity from lengths they have not validated (apache/datafusion#26949)";
-
+/// The lengths of a call's rows. The broadcast law turns a scalar length into
+/// an array, so a scalar length counts once per row
 fn pad_lengths(call: &Call) -> Vec<i64> {
     match &call.args[1] {
         Arg::Array(g) => g
@@ -169,18 +143,15 @@ fn pad_lengths(call: &Call) -> Vec<i64> {
     }
 }
 
-/// An abort cannot be caught, so this checks the sum of the lengths before
-/// the call. Above `i32::MAX`, the capacity estimate exceeds what any single
-/// valid length allows. Below it, a sum over the budget costs too much to
-/// check
+/// `lpad` and `rpad` reserve capacity for the lengths from 0 to `i32::MAX`,
+/// treat a negative length as 0, and return an error for a longer one before
+/// they allocate for it. So only the lengths in that range cost memory
 fn pad_before(call: &Call) -> Result<(), TestCaseError> {
     let total: u128 = pad_lengths(call)
         .into_iter()
-        .map(|n| n.max(0) as u128)
+        .filter(|n| (0..=i64::from(i32::MAX)).contains(n))
+        .map(|n| n as u128)
         .sum();
-    if total > i32::MAX as u128 {
-        return Err(known(PAD_KNOWN));
-    }
     // Each character takes up to 4 bytes
     if 4 * total > BUDGET {
         return Err(TestCaseError::reject(
@@ -190,12 +161,25 @@ fn pad_before(call: &Call) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-/// A negative length makes the capacity overflow, which panics
+// With a scalar length, `lpad` and `rpad` reject a length above `i32::MAX`
+// before they read any row, while the array path returns NULL for a row
+// whose string or fill is NULL. So such a row errors only when its length is
+// a scalar. Found by this harness on DataFusion main at e2dc8b048b
+// (apache/datafusion#27482)
 fn pad_after(call: &Call, e: TestCaseError) -> TestCaseError {
-    let negative = pad_lengths(call).into_iter().any(|n| n < 0);
+    let null_long = (0..rows(call)).any(|i| {
+        matches!(row(&call.args[1], i), Val::I64(n) if *n > i64::from(i32::MAX))
+            && call.args.iter().any(|a| *row(a, i) == Val::Null)
+    });
     match &e {
-        TestCaseError::Fail(m) if negative && m.to_string().contains("capacity overflow") => {
-            known(PAD_KNOWN)
+        TestCaseError::Fail(m)
+            if null_long
+                && m.to_string()
+                    .contains("too large, maximum allowed length is") =>
+        {
+            known(
+                "known: lpad and rpad reject a scalar length above i32::MAX on a NULL string or fill (apache/datafusion#27482)",
+            )
         }
         _ => e,
     }
@@ -219,68 +203,6 @@ fn rpad() {
     ]
     .concat();
     laws_with("rpad", &unicode::rpad(), &types, pad_before, pad_after);
-}
-
-#[test]
-fn ceil() {
-    let types = one_of_each(&[floats(), decimals()].concat());
-    laws_with(
-        "ceil",
-        &math::ceil(),
-        &types,
-        |_| Ok(()),
-        decimal_scalar_no_rows,
-    );
-}
-
-#[test]
-fn floor() {
-    let types = one_of_each(&[floats(), decimals()].concat());
-    laws_with(
-        "floor",
-        &math::floor(),
-        &types,
-        |_| Ok(()),
-        decimal_scalar_no_rows,
-    );
-}
-
-// `split_part`'s fast path for an array string with a scalar delimiter and
-// position rejects position 0 before it reads a row, while the array path
-// skips rows with a NULL argument. So with no non-NULL string, only the fast
-// path fails. Found by this harness on DataFusion main at 14b3edd9a3
-// (apache/datafusion#27276)
-fn split_part_zero(call: &Call, e: TestCaseError) -> TestCaseError {
-    let fast_path_zero = match &call.args[..] {
-        [Arg::Array(s), Arg::Scalar(d), Arg::Scalar(p)] => {
-            s.rows.iter().all(|v| *v == Val::Null)
-                && d.rows[0] != Val::Null
-                && p.rows[0] == Val::I64(0)
-        }
-        _ => false,
-    };
-    match &e {
-        TestCaseError::Fail(m)
-            if fast_path_zero && m.to_string().contains("field position must not be zero") =>
-        {
-            known(
-                "known: split_part rejects position 0 on a scalar position before reading a row (apache/datafusion#27276)",
-            )
-        }
-        _ => e,
-    }
-}
-
-#[test]
-fn split_part() {
-    let types = per_string(|s| vec![s.clone(), s, Int64]);
-    laws_with(
-        "split_part",
-        &string::split_part(),
-        &types,
-        |_| Ok(()),
-        split_part_zero,
-    );
 }
 
 #[test]
@@ -362,6 +284,8 @@ use DataType::{Float64, Int32, Int64};
 law_tests! {
     // Math
     abs: math::abs(), one_of_each(&numeric());
+    ceil: math::ceil(), one_of_each(&[floats(), decimals()].concat());
+    floor: math::floor(), one_of_each(&[floats(), decimals()].concat());
     round: math::round(), [
         one_of_each(&[floats(), decimals()].concat()),
         [floats(), decimals()].concat().into_iter().map(|t| vec![t, Int32]).collect(),
@@ -397,6 +321,7 @@ law_tests! {
     concat: string::concat(), [repeated(&strings(), 2), repeated(&strings(), 3)].concat();
     concat_ws: string::concat_ws(), repeated(&strings(), 3);
     replace: string::replace(), repeated(&strings(), 3);
+    split_part: string::split_part(), per_string(|s| vec![s.clone(), s, Int64]);
     starts_with: string::starts_with(), repeated(&strings(), 2);
     ends_with: string::ends_with(), repeated(&strings(), 2);
     contains: string::contains(), repeated(&strings(), 2);
