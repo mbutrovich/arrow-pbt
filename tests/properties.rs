@@ -182,6 +182,11 @@ mod arrow_arith {
     }
 
     #[test]
+    fn divisor() {
+        check("divisor");
+    }
+
+    #[test]
     fn aggregate() {
         check("aggregate");
     }

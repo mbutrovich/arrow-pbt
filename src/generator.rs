@@ -939,7 +939,7 @@ pub(crate) fn narrower(d: &Domain) -> Vec<u32> {
 
 /// A value of `d` whose bit length is uniform, so small and large
 /// magnitudes are equally likely
-fn spread(d: Domain) -> BoxedStrategy<BigInt> {
+pub(crate) fn spread(d: Domain) -> BoxedStrategy<BigInt> {
     let bits = d.hi.bits().max((-&d.lo).bits());
     (
         0..=bits,
@@ -959,13 +959,13 @@ fn spread(d: Domain) -> BoxedStrategy<BigInt> {
 }
 
 /// Values of `d`, with its limits more often than `spread` gives them
-fn within(d: Domain) -> BoxedStrategy<BigInt> {
+pub(crate) fn within(d: Domain) -> BoxedStrategy<BigInt> {
     prop_oneof![1 => select(vec![d.lo.clone(), d.hi.clone()]), 5 => spread(d)].boxed()
 }
 
 /// Zero, one, minus one, the limits of `d`, and the values within one of a
 /// power of two or of ten
-fn near_powers(d: &Domain) -> Vec<BigInt> {
+pub(crate) fn near_powers(d: &Domain) -> Vec<BigInt> {
     let one = BigInt::from(1);
     let mut v = vec![
         BigInt::zero(),

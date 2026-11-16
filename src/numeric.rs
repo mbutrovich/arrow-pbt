@@ -1,6 +1,6 @@
 //! Properties for `neg`, the arity helpers, the bitwise kernels, the
-//! aggregate kernels, fixed-point decimal multiplication, and decimal
-//! formatting
+//! aggregate kernels, fixed-point decimal multiplication, decimal
+//! formatting, and the precomputed divisors
 
 use arrow_arith::aggregate as agg;
 use arrow_array::cast::AsArray;
@@ -18,6 +18,7 @@ use proptest::test_runner::TestCaseError;
 use std::cell::Cell;
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
+use crate::generator::Domain;
 use crate::props::R;
 use crate::props::decimal_scale;
 use crate::props::interval_fields;
@@ -1148,6 +1149,118 @@ pub fn decimal_format_prop(a: ArrayRef) -> R {
     for to in [DataType::Utf8, DataType::LargeUtf8, DataType::Utf8View] {
         let out = arrow_cast::cast(&a, &to).map_err(|e| fail(format!("cast to {to}: {e}")))?;
         check_rows(&out, &to, &expected).map_err(|e| fail(format!("cast to {to}: {e:?}")))?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- divisors
+
+/// The integer type of a precomputed divisor in arrow-buffer
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DivisorType {
+    U32,
+    U64,
+    I32,
+    I64,
+}
+
+impl DivisorType {
+    /// The values of the type
+    pub(crate) fn domain(self) -> Domain {
+        let (bits, signed): (u32, bool) = match self {
+            Self::U32 => (32, false),
+            Self::U64 => (64, false),
+            Self::I32 => (32, true),
+            Self::I64 => (64, true),
+        };
+        let one = BigInt::from(1);
+        if signed {
+            Domain {
+                lo: -(&one << (bits - 1)),
+                hi: (&one << (bits - 1)) - &one,
+            }
+        } else {
+            Domain {
+                lo: BigInt::from(0),
+                hi: (&one << bits) - &one,
+            }
+        }
+    }
+}
+
+/// A divisor type, a nonzero divisor, and dividends, as integers of that type
+#[derive(Clone, Debug)]
+pub struct DivisorCase {
+    pub ty: DivisorType,
+    pub d: BigInt,
+    pub ns: Vec<BigInt>,
+}
+
+/// `wrapping_div_rem` of one dividend, and `checked_div_rem` for a signed
+/// type. Unsigned divisors have no `checked_div_rem`
+type DivRem = ((BigInt, BigInt), Option<Option<(BigInt, BigInt)>>);
+
+/// Divides each of `ns` by the divisor that `new(d)` returns, after
+/// checking that `new(0)` returns none
+fn divide(ty: DivisorType, d: &BigInt, ns: &[BigInt]) -> Result<Vec<DivRem>, String> {
+    use arrow_buffer::{DivisorI32, DivisorI64, DivisorU32, DivisorU64};
+    // The case strategy draws every value within the type, so the
+    // conversions succeed
+    macro_rules! native {
+        ($divisor:ident, $t:ty, |$dv:ident, $n:ident| $checked:expr) => {{
+            if $divisor::new(0).is_some() {
+                return Err("new(0) returned a divisor".into());
+            }
+            let $dv = $divisor::new(<$t>::try_from(d).unwrap())
+                .ok_or("new returned none for a nonzero divisor")?;
+            Ok(ns
+                .iter()
+                .map(|n| {
+                    let $n = <$t>::try_from(n).unwrap();
+                    let (q, r) = $dv.wrapping_div_rem($n);
+                    ((BigInt::from(q), BigInt::from(r)), $checked)
+                })
+                .collect())
+        }};
+    }
+    let pair = |qr: Option<(i128, i128)>| qr.map(|(q, r)| (BigInt::from(q), BigInt::from(r)));
+    match ty {
+        DivisorType::U32 => native!(DivisorU32, u32, |dv, n| None),
+        DivisorType::U64 => native!(DivisorU64, u64, |dv, n| None),
+        DivisorType::I32 => native!(DivisorI32, i32, |dv, n| Some(pair(
+            dv.checked_div_rem(n).map(|(q, r)| (q.into(), r.into()))
+        ))),
+        DivisorType::I64 => native!(DivisorI64, i64, |dv, n| Some(pair(
+            dv.checked_div_rem(n).map(|(q, r)| (q.into(), r.into()))
+        ))),
+    }
+}
+
+/// Precomputed divisors against exact division: `new` returns none only
+/// for 0, `wrapping_div_rem` truncates toward zero and wraps only
+/// `MIN / -1`, and `checked_div_rem` returns none only there
+pub fn divisor_prop(c: DivisorCase) -> R {
+    let DivisorCase { ty, d, ns } = c;
+    let dom = ty.domain();
+    let size = &dom.hi - &dom.lo + 1;
+    let got = divide(ty, &d, &ns).map_err(|m| fail(format!("{ty:?} {d}: {m}")))?;
+    for (n, (wrapping, checked)) in ns.iter().zip(&got) {
+        // `BigInt` division truncates toward zero, as Rust's does
+        let (q, r) = (n / &d, n % &d);
+        let wrapped = (&q - &dom.lo).mod_floor(&size) + &dom.lo;
+        if *wrapping != (wrapped.clone(), r.clone()) {
+            return Err(fail(format!(
+                "{ty:?} {d}: wrapping_div_rem({n}) returned {wrapping:?}, expected ({wrapped}, {r})"
+            )));
+        }
+        if let Some(checked) = checked {
+            let want = (q <= dom.hi).then(|| (q.clone(), r.clone()));
+            if *checked != want {
+                return Err(fail(format!(
+                    "{ty:?} {d}: checked_div_rem({n}) returned {checked:?}, expected {want:?}"
+                )));
+            }
+        }
     }
     Ok(())
 }
