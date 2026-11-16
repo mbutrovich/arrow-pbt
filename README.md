@@ -53,9 +53,9 @@ A failing property is the start of a bug report, not the report itself. I follow
 
 ## More
 
-- [docs/running.md](docs/running.md): how to choose the commits under test, the settings, the binary for long runs, run sizes, and nightly runs.
+- [docs/running.md](docs/running.md): how to choose the commits under test, the settings, the binary for long runs, run sizes, nightly runs, and how to test an arrow-rs release candidate or pull request.
 - [docs/design.md](docs/design.md): the terms used here, the generator, the oracle, the properties, the rules that keep them honest, and how downstream projects use the crate.
-- [docs/workflow.md](docs/workflow.md): what to do when a property fails, how to keep finding bugs while one waits for a fix, how to move the commits under test, and how to add a property or an adapter.
+- [docs/workflow.md](docs/workflow.md): what to do when a property fails, how to keep finding bugs while one waits for a fix, how to move the commits under test, and how to add a property, including one for API in an unmerged arrow-rs pull request, or an adapter.
 - [docs/known-bugs.md](docs/known-bugs.md): every bug the properties found, and the filters of the open ones.
 - [docs/coverage.md](docs/coverage.md): every arrow-rs entry point, what covers it, and what was measured.
 - [CONTRIBUTING.md](CONTRIBUTING.md): the layout of the code, the checks to run before a pull request, and where to report a bug the properties find.

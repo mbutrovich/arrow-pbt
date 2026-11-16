@@ -1,6 +1,6 @@
 # Running
 
-This guide is for running the properties: against a branch before a risky change, against `main` every night, or for a report of what the generator produces. [CONTRIBUTING.md](../CONTRIBUTING.md) covers changing arrow-pbt itself.
+This guide is for running the properties: against an arrow-rs pull request or release candidate, against `main` every night, or for a report of what the generator produces. [CONTRIBUTING.md](../CONTRIBUTING.md) covers changing arrow-pbt itself.
 
 ## Choosing the commits under test
 
@@ -82,8 +82,6 @@ The binary runs arrow-rs's properties, and `cargo test` runs an adapter's. When 
 
 On macOS, prefix a long run with `caffeinate -i`, so that idle sleep does not pause it.
 
-Before merging a risky change to arrow-rs, run the properties for the touched crate against the branch with a large case count. For example, a change to decimal division would run `arith,cast,fixed_point,decimal_format`. For a change to a DataFusion function, point `.cargo/config.toml` at the branch and run that function's test with `ARROW_PBT_CASES` in the thousands, such as `cargo test -p arrow-pbt-datafusion lpad`.
-
 ## Validating a release candidate
 
 arrow-rs tags each release candidate as `<version>-rc<n>`, such as `60.1.0-rc1`. To run the properties on one, give each arrow-rs crate in `.cargo/config.toml` the tag as its git source, and delete the DataFusion entries:
@@ -106,6 +104,35 @@ The DataFusion adapter tests DataFusion's code, so an arrow-rs candidate needs o
 - The candidate must contain the arrow-rs commit that `Cargo.toml` names. A known-bug filter is removed when its fix lands on arrow-rs `main`, so on a candidate cut before a fix, the property fails on a bug that [known-bugs.md](known-bugs.md) lists as fixed. `git merge-base --is-ancestor <commit> <tag>` in an arrow-rs checkout checks it.
 - A candidate of a new major version needs the `arrow-*` requirement in `Cargo.toml` raised to match, as step 2 of [Moving the commits](workflow.md#moving-the-commits) says. Otherwise Cargo warns that the patch was not used and tests the crates.io release.
 - Candidates on an older release line, such as a 59.x maintenance release, cannot be checked. The `coalesce` property uses `BatchCoalescer` and `FilterBuilder` methods first released in 60.1.0.
+
+## Testing an arrow-rs pull request
+
+The properties can check an arrow-rs pull request before it merges, at far more cases than the pull request's own tests run. A pull request that changes code behind entry points the properties already call, such as a faster kernel, needs nothing new in arrow-pbt. Give each arrow-rs crate in `.cargo/config.toml` the pull request's head as its git source:
+
+```toml
+[patch.crates-io]
+arrow = { git = "https://github.com/apache/arrow-rs", rev = "refs/pull/<n>/head" }
+arrow-arith = { git = "https://github.com/apache/arrow-rs", rev = "refs/pull/<n>/head" }
+# and the same for every other arrow-rs crate in .cargo/config.toml.example
+```
+
+Cargo resolves the reference to a commit, which `Cargo.lock` names after the `#`. The reference moves with every push, so check that the commit is the one you meant to test.
+
+Then run the properties that call the changed code, with many seeds so that every core has work. A change to checked integer arithmetic would run `arith`, and a change to decimal division `arith,cast,fixed_point,decimal_format`:
+
+```sh
+ARROW_PBT_REASONS=1 cargo run -q -- run arith 1-18 10000
+```
+
+The pull request has the first limit of a release candidate: its head must contain the arrow-rs commit that `Cargo.toml` names, or properties fail on bugs fixed since. Merging arrow-rs `main` into the pull request gives it that commit.
+
+A passing run means little unless its cases reach the changed code. To check, break the property's model in the way the change could go wrong and confirm that it fails, as rule 6 in [the design](design.md#rules) asks, or count the cases that take the new path with a temporary counter in the property. Some code picks its path by target, such as `DivisorU32::new`, which picks a different variant on aarch64 than on x86_64 without SSE4.1, so a local run covers only the local target's paths.
+
+Report the run on the pull request: the arrow-rs commit and the arrow-pbt commit tested, the command with its seeds and cases, the result with its discards by reason, and what the cases reached. A failure goes through [When a property fails](#when-a-property-fails).
+
+A pull request that adds API needs a property that calls the new API, which cannot build on arrow-pbt's `main`. [A property for unmerged API](workflow.md#a-property-for-unmerged-api) says how to write one.
+
+A DataFusion pull request works the same way through the DataFusion entries in `.cargo/config.toml`. Run the changed function's test with `ARROW_PBT_CASES` in the thousands, such as `cargo test -p arrow-pbt-datafusion lpad`.
 
 ## When a property fails
 

@@ -34,7 +34,7 @@ A failing property stops at its first failure, so a known bug would mask every o
 
 When the bug aborts the process, as undefined behavior that a standard library check catches in a debug build does, its signature cannot be read after the call. The filter then checks the bug's precondition before the call, by calling the project on its own or by computing the condition from the input's values, never by input type. The filter for `take_record_batch` calls `take` on the first column and discards the case when it returns for an index out of bounds.
 
-When the bug fails one check on every input of a kind, so that a discard would discard every case, skip that check with `known::tolerated` and keep the case's other checks. `ARROW_PBT_NO_KNOWN=1` turns it into a failure as it does a discard, but `ARROW_PBT_REASONS` cannot count it, so its row in [known-bugs.md](known-bugs.md) is the record. `decimal_precision` skipped the type check of `null_if_overflow_precision` this way for [apache/arrow-rs#11300](https://github.com/apache/arrow-rs/issues/11300) until its fix landed.
+When the bug fails one check on every input of a kind, so that a discard would discard every case, skip that check with `known::tolerated` and keep the case's other checks. `ARROW_PBT_NO_KNOWN=1` turns it into a failure as it does a discard, but `ARROW_PBT_REASONS` cannot count it, so its row in [known-bugs.md](known-bugs.md) is the record.
 
 When the bug is in a path the generator itself uses to build arrays (FFI import, for example), the generator falls back to another layout and counts each fallback instead. `arrow-pbt coverage` prints those counts, so the gap stays visible.
 
@@ -92,6 +92,18 @@ For arrow-rs:
 For a DataFusion scalar function, add a line to `law_tests!` in `arrow-pbt-datafusion/tests/functions.rs` with the function and its signatures, the argument types it accepts after coercion. The test first checks each signature with DataFusion's `fields_with_udf`, which leaves a signature unchanged only if the planner would pass it as it is, then runs `check_broadcast` and `check_row_by_row` through `run::check`. A function with a known bug or a costly result calls `laws_with` instead, whose hooks run before the call, for a bug that aborts the process or a result over the budget, and after it, to map a failure to its discard. `repeat` uses the first, and `lpad` both. Run it with `ARROW_PBT_CASES` in the thousands.
 
 For a DataFusion physical expression, write a closure that builds it from its operand expressions and a function that lists its operand types, and check in that function that DataFusion's coercion leaves those types unchanged, as `case_signatures` in `arrow-pbt-datafusion/tests/exprs.rs` does. Then run `check_expr_broadcast`, `check_expr_row_by_row` and `check_expr_split` through `run::check` over `exprs`.
+
+### A property for unmerged API
+
+A property for API that an arrow-rs pull request adds cannot build against the arrow-rs commit that `main` names. It lives on a branch until the pull request merges:
+
+1. Put the part of the property that calls released API on `main` first, such as the existing widths of a type that the pull request extends to new ones.
+2. Write the rest on a branch named `arrow-rs-<n>`, after the pull request's number, and set every arrow-rs entry in the `[patch.crates-io]` section of `Cargo.toml` to the pull request's head commit. A commit, unlike `refs/pull/<n>/head`, keeps every run of the branch on the code the property was written against.
+3. Open a draft pull request in arrow-pbt from the branch, so that CI builds and runs it on x86_64, which takes paths that aarch64 does not. Link it when reporting a run on the arrow-rs pull request, as [Testing an arrow-rs pull request](running.md#testing-an-arrow-rs-pull-request) describes.
+4. When the arrow-rs pull request changes, move the patch to its new head. When `main` changes, merge `main` into the branch.
+5. When the arrow-rs pull request merges, move `main` to an arrow-rs commit that contains it, as [Moving the commits](#moving-the-commits) says. Then merge `main` into the branch, keep `main`'s `Cargo.toml` and `Cargo.lock`, and merge the arrow-pbt pull request. If the arrow-rs pull request closes without merging, close the arrow-pbt one.
+
+`main` names only commits on arrow-rs `main`, so nothing on it depends on unmerged code.
 
 ## Adding an adapter
 
