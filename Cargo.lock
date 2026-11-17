@@ -244,10 +244,14 @@ dependencies = [
  "arrow-schema",
  "arrow-select",
  "datafusion-common",
+ "datafusion-execution",
  "datafusion-expr",
  "datafusion-functions",
  "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "futures",
  "proptest",
+ "tokio",
 ]
 
 [[package]]
@@ -530,6 +534,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-common-runtime"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=e2dc8b048b542e7abdc296254aa54e26eb89d76d#e2dc8b048b542e7abdc296254aa54e26eb89d76d"
+dependencies = [
+ "futures",
+ "log",
+ "tokio",
+]
+
+[[package]]
 name = "datafusion-doc"
 version = "57.0.0-dev"
 source = "git+https://github.com/apache/datafusion?rev=e2dc8b048b542e7abdc296254aa54e26eb89d76d#e2dc8b048b542e7abdc296254aa54e26eb89d76d"
@@ -687,6 +701,43 @@ dependencies = [
  "parking_lot 0.13.0",
  "pin-project",
  "regex",
+]
+
+[[package]]
+name = "datafusion-physical-plan"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=e2dc8b048b542e7abdc296254aa54e26eb89d76d#e2dc8b048b542e7abdc296254aa54e26eb89d76d"
+dependencies = [
+ "arrow",
+ "arrow-data",
+ "arrow-ipc",
+ "arrow-ord",
+ "arrow-schema",
+ "arrow-select",
+ "async-trait",
+ "bytes",
+ "datafusion-common",
+ "datafusion-common-runtime",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-expr-common",
+ "datafusion-functions",
+ "datafusion-functions-aggregate-common",
+ "datafusion-functions-window-common",
+ "datafusion-physical-expr",
+ "datafusion-physical-expr-common",
+ "futures",
+ "half",
+ "hashbrown 0.17.1",
+ "indexmap",
+ "itertools",
+ "log",
+ "num-traits",
+ "parking_lot 0.13.0",
+ "pin-project-lite",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

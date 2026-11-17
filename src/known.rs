@@ -56,3 +56,60 @@ pub fn tolerated(reason: impl Into<String>) -> Result<(), TestCaseError> {
         Ok(())
     }
 }
+
+/// Known: `filter`, `interleave` and the row format rebuild run-end encoded
+/// arrays with `RunArray::try_new`, which declares the values field
+/// nullable (apache/arrow-rs#11607). Such a
+/// failure names one run-end encoded type in both forms, through
+/// `Display` in a type comparison or `Debug` in the coalescer's assertion.
+/// Any other result is returned unchanged
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt::known::ree_values_nullable;
+/// use proptest::test_runner::TestCaseError;
+/// let m = "expected RunEndEncoded(non-null Int16, non-null Utf8) \
+///     but found RunEndEncoded(non-null Int16, Utf8)";
+/// let r = ree_values_nullable(Err(TestCaseError::fail(m)));
+/// assert!(matches!(r, Err(TestCaseError::Reject(_))));
+/// assert!(ree_values_nullable(Ok(())).is_ok());
+/// ```
+pub fn ree_values_nullable(r: Result<(), TestCaseError>) -> Result<(), TestCaseError> {
+    let Err(TestCaseError::Fail(m)) = &r else {
+        return r;
+    };
+    let m = m.to_string();
+    // The run ends and values of each `RunEndEncoded(..)` in the message
+    let mut forms = vec![];
+    for (i, _) in m.match_indices("RunEndEncoded(") {
+        let rest = &m[i + "RunEndEncoded(".len()..];
+        let mut depth = 1;
+        let Some(end) = rest.char_indices().find_map(|(k, c)| {
+            depth += (c == '(') as i32 - (c == ')') as i32;
+            (depth == 0).then_some(k)
+        }) else {
+            continue;
+        };
+        if let Some((ends, values)) = rest[..end].split_once(", ") {
+            forms.push((
+                ends.to_string(),
+                values
+                    .strip_prefix("non-null ")
+                    .map_or_else(|| (values.to_string(), true), |v| (v.to_string(), false)),
+            ));
+        }
+    }
+    let display = forms
+        .iter()
+        .any(|(e, (v, nullable))| !nullable && forms.contains(&(e.clone(), (v.clone(), true))));
+    let debug = m.contains("RunEndEncoded(Field")
+        && m.contains("assertion `left == right` failed")
+        && m.contains("\"values\"");
+    if display || debug {
+        return Err(known(
+            "known: run-end encoded values field made nullable (apache/arrow-rs#11607)",
+        ));
+    }
+    r
+}

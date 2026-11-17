@@ -588,50 +588,6 @@ pub fn bools((a, b): (BooleanArray, BooleanArray)) -> R {
     Ok(())
 }
 
-/// Known: `filter`, `interleave` and the row format rebuild run-end encoded
-/// arrays with `RunArray::try_new`, which declares the values field
-/// nullable (apache/arrow-rs#11607). Such a
-/// failure names one run-end encoded type in both forms, through
-/// `Display` in a type comparison or `Debug` in the coalescer's assertion
-fn known_ree_values_nullable(r: R) -> R {
-    let Err(TestCaseError::Fail(m)) = &r else {
-        return r;
-    };
-    let m = m.to_string();
-    // The run ends and values of each `RunEndEncoded(..)` in the message
-    let mut forms = vec![];
-    for (i, _) in m.match_indices("RunEndEncoded(") {
-        let rest = &m[i + "RunEndEncoded(".len()..];
-        let mut depth = 1;
-        let Some(end) = rest.char_indices().find_map(|(k, c)| {
-            depth += (c == '(') as i32 - (c == ')') as i32;
-            (depth == 0).then_some(k)
-        }) else {
-            continue;
-        };
-        if let Some((ends, values)) = rest[..end].split_once(", ") {
-            forms.push((
-                ends.to_string(),
-                values
-                    .strip_prefix("non-null ")
-                    .map_or_else(|| (values.to_string(), true), |v| (v.to_string(), false)),
-            ));
-        }
-    }
-    let display = forms
-        .iter()
-        .any(|(e, (v, nullable))| !nullable && forms.contains(&(e.clone(), (v.clone(), true))));
-    let debug = m.contains("RunEndEncoded(Field")
-        && m.contains("assertion `left == right` failed")
-        && m.contains("\"values\"");
-    if display || debug {
-        return Err(known(
-            "known: run-end encoded values field made nullable (apache/arrow-rs#11607)",
-        ));
-    }
-    r
-}
-
 /// Known: `take` rejects a null index into a struct or fixed-size list
 /// whose run-end encoded or union child cannot hold a null, though the
 /// parent's validity can (apache/arrow-rs#11608, the follow-up agreed in
@@ -666,10 +622,7 @@ fn known_take_null_under_parent(r: R, inputs: &[ArrayRef]) -> R {
 
 pub(crate) fn with_known<T: Inputs>(property: fn(T) -> R, input: T) -> R {
     let inputs = input.arrays();
-    known_take_null_under_parent(
-        known_ree_values_nullable(caught(|| property(input))),
-        &inputs,
-    )
+    known_take_null_under_parent(ree_values_nullable(caught(|| property(input))), &inputs)
 }
 
 // ---------------------------------------------------------------- laws
@@ -1099,7 +1052,7 @@ pub fn sort_prop((a, descending, nulls_first, limit): (ArrayRef, bool, bool, Opt
 // ---------------------------------------------------------------- arithmetic
 
 use crate::inventory::Inputs;
-use crate::known::known;
+use crate::known::{known, ree_values_nullable};
 use crate::spec::check;
 use crate::types::{any_type, is_view_dict};
 use arrow_array::Datum;
