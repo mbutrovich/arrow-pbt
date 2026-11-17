@@ -1234,7 +1234,7 @@ pub fn slice_slice() -> BoxedStrategy<(ArrayRef, usize, usize, usize, usize)> {
 /// quotient steps
 pub fn divisor() -> BoxedStrategy<DivisorCase> {
     use DivisorType::*;
-    select(vec![U32, U64, I32, I64])
+    select(vec![U32, U64, I32, I64, I128, I256])
         .prop_flat_map(|ty| {
             let d = integer(&ty.domain()).prop_filter("a divisor is nonzero", |d| !d.is_zero());
             (Just(ty), d)
@@ -1263,8 +1263,9 @@ fn integer(dom: &Domain) -> BoxedStrategy<BigInt> {
 }
 
 /// 0, 1, -1, and the limits of `dom` and of each narrower width, with the
-/// negation of each lower limit. The divisors' rustdoc names `MIN / -1`,
-/// and `near_powers` holds too many values to draw it often
+/// negation of each lower limit. The divisors' rustdoc names `MIN / -1` and
+/// `MIN / 2^(N - 1)` of a narrower width, and `near_powers` holds too many
+/// values to draw them often
 fn edges(dom: &Domain) -> Vec<BigInt> {
     let mut v: Vec<BigInt> = [0, 1, -1].into_iter().map(BigInt::from).collect();
     for b in narrower(dom) {
