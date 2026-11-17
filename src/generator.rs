@@ -1486,6 +1486,45 @@ fn null_rate() -> BoxedStrategy<f64> {
 /// let s = seed().new_tree(&mut runner).unwrap().current();
 /// assert_eq!(build(&GeneratorType::Utf8, &r, s).len(), 5);
 /// ```
+/// `n` rows of a string or binary type with lengths at the boundaries of the
+/// row format's blocks (8-byte mini-blocks up to 32 bytes, then 32-byte
+/// blocks, in `arrow-row`'s `variable.rs`) and past three of them, as slices
+/// of one buffer so that rows share prefixes. Any other type draws as `rows`
+pub(crate) fn block_rows(t: &GeneratorType, n: usize) -> BoxedStrategy<Vec<Val>> {
+    use GeneratorType as G;
+    let text = match t {
+        G::Utf8 | G::LargeUtf8 | G::Utf8View => true,
+        G::Binary | G::LargeBinary | G::BinaryView => false,
+        _ => return rows(t, n),
+    };
+    let length = prop_oneof![
+        3 => select(vec![0usize, 1, 7, 8, 9, 15, 16, 17, 24, 31, 32, 33, 39, 40, 41, 63, 64, 65, 95, 96, 97, 101]),
+        1 => 0..=101usize,
+    ];
+    // ASCII, so that every byte range is valid UTF-8
+    let pool = if text {
+        vec(0x20u8..0x7f, 512 + 101).boxed()
+    } else {
+        bytes(512 + 101)
+    };
+    let row = (length, 0..512usize, 0..10u8);
+    (pool, vec(row, n), prop_oneof![Just(0u8), Just(1), Just(3)])
+        .prop_map(move |(pool, rows, null_tenths)| {
+            rows.into_iter()
+                .map(|(len, at, null)| {
+                    if null < null_tenths {
+                        Val::Null
+                    } else if text {
+                        Val::Str(pool[at..at + len].iter().map(|&b| b as char).collect())
+                    } else {
+                        Val::Bytes(pool[at..at + len].to_vec())
+                    }
+                })
+                .collect()
+        })
+        .boxed()
+}
+
 pub fn rows(t: &GeneratorType, n: usize) -> BoxedStrategy<Vec<Val>> {
     match t {
         GeneratorType::NotNull(t) => rows_with(t, n, Just(0.0).boxed()),
