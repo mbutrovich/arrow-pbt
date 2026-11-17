@@ -26,9 +26,13 @@ arrow-string = "60"
 # DataFusion releases of the same major version on an older arrow. With a
 # looser one, a patch Cargo cannot use falls back to them with only a warning
 datafusion-common = "=57.0.0-dev"
+datafusion-execution = "=57.0.0-dev"
 datafusion-expr = "=57.0.0-dev"
 datafusion-functions = "=57.0.0-dev"
 datafusion-physical-expr = "=57.0.0-dev"
+datafusion-physical-plan = "=57.0.0-dev"
+futures = "0.3"
+tokio = { version = "1", features = ["rt"] }
 # Same declaration as arrow-rs/parquet/Cargo.toml
 proptest = { version = "1.0", default-features = false, features = ["std"] }
 
@@ -51,9 +55,11 @@ arrow-schema = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f
 arrow-select = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
 arrow-string = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
 datafusion-common = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
+datafusion-execution = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
 datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
 datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
 datafusion-physical-expr = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
+datafusion-physical-plan = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
 
 [package]
 name = "arrow-pbt"
