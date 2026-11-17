@@ -232,6 +232,12 @@ pub fn all_properties() -> Vec<Entry> {
             cases::sort_columns,
             order::row_format,
         ),
+        entry(
+            "radix_sort",
+            "sort_columns",
+            cases::sort_columns,
+            order::radix_sort,
+        ),
     ]
 }
 
