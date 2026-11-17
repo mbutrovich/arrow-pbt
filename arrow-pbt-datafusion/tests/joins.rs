@@ -144,6 +144,19 @@ fn perfect_hash_join_agrees_with_hash_map() {
     );
 }
 
+/// apache/datafusion#27399 moves inner, left, right, and full hash joins
+/// to a new path behind `enable_migration_hash_join`, on by default, and
+/// keeps the old path for one release. Both must give the same rows
+#[test]
+fn migration_hash_join_agrees_with_legacy() {
+    let options = [("datafusion.execution.enable_migration_hash_join", "false")];
+    check(
+        "migration hash join against legacy",
+        || joins(&key_types()).unwrap(),
+        |case: JoinCase| filtered(&case, || check_join_config(&case, &hash_join, &options)),
+    );
+}
+
 /// A hash join of the case's inputs with a mistake in how it is built
 fn broken(mistake: fn(&JoinCase) -> JoinCase) -> Box<JoinPlan> {
     Box::new(move |case, left, right| hash_join(&mistake(case), left, right))
