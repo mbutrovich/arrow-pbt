@@ -270,4 +270,9 @@ mod arrow_ord_and_arrow_row {
     fn row_format() {
         check("row_format");
     }
+
+    #[test]
+    fn radix_sort() {
+        check("radix_sort");
+    }
 }
