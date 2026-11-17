@@ -54,12 +54,12 @@ arrow-row = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f427
 arrow-schema = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
 arrow-select = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
 arrow-string = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-datafusion-common = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
-datafusion-execution = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
-datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
-datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
-datafusion-physical-expr = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
-datafusion-physical-plan = { git = "https://github.com/apache/datafusion", rev = "e2dc8b048b542e7abdc296254aa54e26eb89d76d" }
+datafusion-common = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
+datafusion-execution = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
+datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
+datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
+datafusion-physical-expr = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
+datafusion-physical-plan = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
 
 [package]
 name = "arrow-pbt"
