@@ -9,8 +9,8 @@ use arrow_array::types::{Decimal32Type, Decimal64Type, Decimal128Type, Decimal25
 use arrow_array::{Array, make_array};
 use arrow_data::{ArrayData, BufferSpec, layout};
 use arrow_pbt::generator::{
-    GeneratedArray, GeneratorType, ValueDomain, all_types, array, batch, batches, build, len, rows,
-    schemas, seed,
+    GeneratedArray, GeneratorType, ValueDomain, all_types, array, batch, batches, build, len,
+    pooled_batch, rows, schemas, seed, value_pool,
 };
 use arrow_pbt::run::check;
 use arrow_pbt::val::{Val, check_rows};
@@ -645,4 +645,125 @@ fn streams_vary_in_shape() {
         none && empty && uneven,
         "none {none}, empty {empty}, uneven {uneven}"
     );
+}
+
+/// Pools hold one to eight rows of their type, and none is null when the
+/// type forbids it
+#[test]
+fn value_pools() {
+    let mut runner = TestRunner::deterministic();
+    let nullable = GeneratorType::try_from(&Field::new("a", DataType::Int64, true)).unwrap();
+    let not_null = GeneratorType::try_from(&Field::new("a", DataType::Int64, false)).unwrap();
+    let mut null_seen = false;
+    for _ in 0..256 {
+        let p = value_pool(&nullable)
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
+        assert!((1..=8).contains(&p.len()), "{} values", p.len());
+        null_seen |= p.contains(&Val::Null);
+        let p = value_pool(&not_null)
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
+        assert!(
+            !p.contains(&Val::Null),
+            "a null in a pool of a non-nullable type"
+        );
+    }
+    assert!(null_seen, "no null in 256 pools of a nullable type");
+}
+
+/// Equality on floats differs from bit equality at NaN and at zero, so some
+/// pools hold a NaN, -0.0 and 0.0 together
+#[test]
+fn float_pools_hold_nan_and_both_zeros() {
+    let mut runner = TestRunner::deterministic();
+    let raw = |b: &[u8]| Val::Raw(b.to_vec());
+    for (dt, specials) in [
+        (
+            DataType::Float32,
+            [f32::NAN, -0.0, 0.0].map(|x| raw(&x.to_le_bytes())),
+        ),
+        (
+            DataType::Float64,
+            [f64::NAN, -0.0, 0.0].map(|x| raw(&x.to_le_bytes())),
+        ),
+    ] {
+        let t = GeneratorType::try_from(&dt).unwrap();
+        let all = (0..256).any(|_| {
+            let p = value_pool(&t).new_tree(&mut runner).unwrap().current();
+            specials.iter().all(|v| p.contains(v))
+        });
+        assert!(all, "{dt}: no pool of 256 holds NaN, -0.0 and 0.0");
+    }
+}
+
+/// A pooled batch has its schema and row count, every row of a pooled
+/// column comes from its pool, and the columns hold their generated rows
+#[test]
+fn pooled_batches() {
+    let schema: SchemaRef = Arc::new(Schema::new(vec![
+        Field::new("k", DataType::Int64, true),
+        Field::new("v", DataType::Utf8, true),
+        Field::new("f", DataType::Float64, false),
+    ]));
+    let types: Vec<_> = schema
+        .fields()
+        .iter()
+        .map(|f| GeneratorType::try_from(f.as_ref()).unwrap())
+        .collect();
+    let mut runner = TestRunner::deterministic();
+    for n in [0, 1, 300] {
+        let pools = vec![
+            Some(
+                value_pool(&types[0])
+                    .new_tree(&mut runner)
+                    .unwrap()
+                    .current(),
+            ),
+            None,
+            Some(
+                value_pool(&types[2])
+                    .new_tree(&mut runner)
+                    .unwrap()
+                    .current(),
+            ),
+        ];
+        let g = pooled_batch(&schema, &pools, n, ValueDomain::Logical)
+            .unwrap()
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
+        let b = g.build();
+        assert_eq!(b.schema(), schema);
+        assert_eq!(b.num_rows(), n);
+        for (c, pool) in pools.iter().enumerate() {
+            let rows = &g.columns[c].rows;
+            if let Some(pool) = pool {
+                assert!(
+                    rows.iter().all(|r| pool.contains(r)),
+                    "column {c}: a row outside its pool"
+                );
+            }
+            if let Err(TestCaseError::Fail(e)) =
+                check_rows(b.column(c).as_ref(), schema.field(c).data_type(), rows)
+            {
+                panic!("{n} rows, column {c}: {e}");
+            }
+        }
+    }
+}
+
+/// A pool for each field is required, and a pool must not hold a null for
+/// a non-nullable field or be empty when rows are asked for
+#[test]
+fn pooled_batch_errors() {
+    let schema: SchemaRef = Arc::new(Schema::new(vec![Field::new("k", DataType::Int64, false)]));
+    let d = ValueDomain::Arrow;
+    assert!(pooled_batch(&schema, &[], 1, d).is_err());
+    assert!(pooled_batch(&schema, &[Some(vec![Val::Null])], 1, d).is_err());
+    assert!(pooled_batch(&schema, &[Some(vec![])], 1, d).is_err());
+    assert!(pooled_batch(&schema, &[Some(vec![])], 0, d).is_ok());
+    assert!(pooled_batch(&schema, &[Some(vec![Val::I64(1)])], 1, d).is_ok());
 }

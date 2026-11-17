@@ -1743,8 +1743,16 @@ pub enum ValueDomain {
 /// }
 /// ```
 pub fn array(ty: &GeneratorType, n: usize, domain: ValueDomain) -> BoxedStrategy<GeneratedArray> {
+    array_from(ty, rows(ty, n), domain)
+}
+
+fn array_from(
+    ty: &GeneratorType,
+    rows: BoxedStrategy<Vec<Val>>,
+    domain: ValueDomain,
+) -> BoxedStrategy<GeneratedArray> {
     let ty = ty.clone();
-    (rows(&ty, n), seed())
+    (rows, seed())
         .prop_map(move |(rows, seed)| GeneratedArray {
             rows: match domain {
                 ValueDomain::Arrow => rows,
@@ -1904,6 +1912,120 @@ fn batch_of(
             num_rows: n,
         })
         .boxed()
+}
+
+/// One to eight rows of `ty`, for columns whose rows must repeat, such as
+/// join keys, grouping keys and sort keys with ties. [`pooled_batch`] draws
+/// every row of a column from its pool, so columns and batches that share a
+/// pool share values. A float pool also holds a NaN, -0.0 or 0.0 three times
+/// in four, all three one time in four, because IEEE 754 equality differs
+/// from bit equality at those values and each operator documents how it
+/// treats them. A pool can hold a value more than once, and holds no null
+/// when `ty` forbids one
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt::generator::{GeneratorType, value_pool};
+/// use arrow_pbt::val::Val;
+/// use arrow_schema::{DataType, Field};
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let t = GeneratorType::try_from(&Field::new("k", DataType::Utf8, false)).unwrap();
+/// let mut runner = TestRunner::deterministic();
+/// let pool = value_pool(&t).new_tree(&mut runner).unwrap().current();
+/// assert!((1..=8).contains(&pool.len()));
+/// assert!(!pool.contains(&Val::Null));
+/// ```
+pub fn value_pool(ty: &GeneratorType) -> BoxedStrategy<Vec<Val>> {
+    let raw = |b: &[u8]| Val::Raw(b.to_vec());
+    let specials = match ty.data_type() {
+        DataType::Float32 => [f32::NAN, -0.0, 0.0].map(|x| raw(&x.to_le_bytes())),
+        DataType::Float64 => [f64::NAN, -0.0, 0.0].map(|x| raw(&x.to_le_bytes())),
+        _ => return vec(val(ty), 1..=8).boxed(),
+    };
+    (
+        vec(val(ty), 1..=5),
+        proptest::sample::subsequence(specials.to_vec(), 0..=3),
+    )
+        .prop_map(|(mut drawn, specials)| {
+            drawn.extend(specials);
+            drawn
+        })
+        .boxed()
+}
+
+/// A batch of `schema` with `n` rows, as [`batch`] draws it, except that
+/// each column with a pool in `pools` draws every row from that pool. The
+/// pools are rows of their fields' types, one entry for each field, `None`
+/// for a column drawn as [`batch`] draws it. Batches drawn with the same
+/// pools, of one schema or of two, share values, so their rows can match
+///
+/// # Errors
+///
+/// When the generator cannot build the type of a field, when there is not
+/// one entry in `pools` for each field, or when a pool holds a null for a
+/// non-nullable field or is empty and `n` is not 0
+///
+/// # Example
+///
+/// ```
+/// use std::sync::Arc;
+/// use arrow_pbt::generator::{ValueDomain, pooled_batch};
+/// use arrow_pbt::val::Val;
+/// use arrow_schema::{DataType, Field, Schema};
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let s = Arc::new(Schema::new(vec![
+///     Field::new("k", DataType::Int64, true),
+///     Field::new("v", DataType::Utf8, true),
+/// ]));
+/// let pools = [Some(vec![Val::I64(7), Val::Null]), None];
+/// let mut runner = TestRunner::deterministic();
+/// let g = pooled_batch(&s, &pools, 50, ValueDomain::Arrow)
+///     .unwrap()
+///     .new_tree(&mut runner)
+///     .unwrap()
+///     .current();
+/// assert!(g.columns[0].rows.iter().all(|r| *r == Val::I64(7) || *r == Val::Null));
+/// assert_eq!(g.build().num_rows(), 50);
+/// ```
+pub fn pooled_batch(
+    schema: &SchemaRef,
+    pools: &[Option<Vec<Val>>],
+    n: usize,
+    domain: ValueDomain,
+) -> Result<BoxedStrategy<GeneratedBatch>, String> {
+    let types = column_types(schema)?;
+    if pools.len() != types.len() {
+        return Err(format!("{} pools for {} fields", pools.len(), types.len()));
+    }
+    let columns = schema
+        .fields()
+        .iter()
+        .zip(types.iter().zip(pools))
+        .map(|(f, (t, pool))| match pool {
+            None => Ok(array(t, n, domain)),
+            Some(p) if !f.is_nullable() && p.contains(&Val::Null) => Err(format!(
+                "field {}: a null in the pool of a non-nullable field",
+                f.name()
+            )),
+            // `select` panics on an empty pool, and no rows need none
+            Some(p) if p.is_empty() && n > 0 => {
+                Err(format!("field {}: an empty pool for {n} rows", f.name()))
+            }
+            Some(p) if p.is_empty() => Ok(array_from(t, Just(vec![]).boxed(), domain)),
+            Some(p) => Ok(array_from(t, vec(select(p.clone()), n).boxed(), domain)),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let schema = schema.clone();
+    Ok(columns
+        .prop_map(move |columns| GeneratedBatch {
+            schema: schema.clone(),
+            columns,
+            num_rows: n,
+        })
+        .boxed())
 }
 
 /// A batch as [`batch`] generates it: its schema, an array for each field,
