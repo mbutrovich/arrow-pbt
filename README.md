@@ -8,6 +8,10 @@ The properties and the generator's tests have found 48 bugs: 41 in arrow-rs `mai
 
 arrow-pbt is an independent project. It is not part of Apache Arrow, and the Apache Software Foundation does not endorse it.
 
+## How it differs from arrow-rs's tests
+
+arrow-rs's unit tests check inputs that a contributor chose against results written by hand. Its randomized tests, such as `fuzz_filter`, draw random values for a few types. arrow-pbt draws every type in every layout the format allows, computes each expected result with an oracle that does not use arrow-rs's kernels, and shrinks a failure to a small input with a seed that reproduces it. It adds to arrow-rs's tests and does not replace them. Of the 1,348 mutants of `arrow-select` that compiled, each a copy with one small bug planted, the properties caught 69.0%, the crate's tests caught 74.9%, and the two together caught 81.5%. [Compared with other tests](docs/design.md#compared-with-other-tests) has the details.
+
 ## Who it is for
 
 - **arrow-rs contributors** can run the properties against a branch before merging a risky change, such as a new kernel or a rewrite of a fast path, against `main` every night, and against a release candidate. [docs/running.md](docs/running.md) says how.
@@ -53,9 +57,9 @@ A failing property is the start of a bug report, not the report itself. I follow
 
 ## More
 
-- [docs/running.md](docs/running.md): how to choose the commits under test, the settings, the binary for long runs, run sizes, and nightly runs.
-- [docs/design.md](docs/design.md): the terms used here, the generator, the oracle, the properties, the rules that keep them honest, and how downstream projects use the crate.
-- [docs/workflow.md](docs/workflow.md): what to do when a property fails, how to keep finding bugs while one waits for a fix, how to move the commits under test, and how to add a property or an adapter.
+- [docs/running.md](docs/running.md): how to choose the commits under test, the settings, the binary for long runs, run sizes, nightly runs, and how to test an arrow-rs release candidate or pull request.
+- [docs/design.md](docs/design.md): the terms used here, the generator, the oracle, the properties, the rules that keep them honest, how they compare with arrow-rs's own tests, and how downstream projects use the crate.
+- [docs/workflow.md](docs/workflow.md): what to do when a property fails, how to keep finding bugs while one waits for a fix, how to move the commits under test, and how to add a property, including one for API in an unmerged arrow-rs pull request, or an adapter.
 - [docs/known-bugs.md](docs/known-bugs.md): every bug the properties found, and the filters of the open ones.
 - [docs/coverage.md](docs/coverage.md): every arrow-rs entry point, what covers it, and what was measured.
 - [CONTRIBUTING.md](CONTRIBUTING.md): the layout of the code, the checks to run before a pull request, and where to report a bug the properties find.

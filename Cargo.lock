@@ -42,8 +42,8 @@ dependencies = [
 
 [[package]]
 name = "arrow"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-arith",
  "arrow-array",
@@ -62,8 +62,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-arith"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -75,8 +75,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-array"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "ahash",
  "arrow-buffer",
@@ -94,8 +94,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-buffer"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "bytes",
  "half",
@@ -105,8 +105,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-cast"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -126,8 +126,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-cmp"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -136,8 +136,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-csv"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-cast",
@@ -150,8 +150,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-data"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -162,8 +162,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-ipc"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -177,8 +177,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-json"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -201,8 +201,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-ord"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -244,16 +244,20 @@ dependencies = [
  "arrow-schema",
  "arrow-select",
  "datafusion-common",
+ "datafusion-execution",
  "datafusion-expr",
  "datafusion-functions",
  "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "futures",
  "proptest",
+ "tokio",
 ]
 
 [[package]]
 name = "arrow-row"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -264,8 +268,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-schema"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "bitflags",
  "serde_core",
@@ -274,8 +278,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-select"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -288,8 +292,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-string"
-version = "60.1.0"
-source = "git+https://github.com/apache/arrow-rs?rev=3b3e722d5e77515e029f6ece46366f0bf929057e#3b3e722d5e77515e029f6ece46366f0bf929057e"
+version = "60.2.0"
+source = "git+https://github.com/apache/arrow-rs?rev=6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5#6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -530,6 +534,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-common-runtime"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=e2dc8b048b542e7abdc296254aa54e26eb89d76d#e2dc8b048b542e7abdc296254aa54e26eb89d76d"
+dependencies = [
+ "futures",
+ "log",
+ "tokio",
+]
+
+[[package]]
 name = "datafusion-doc"
 version = "57.0.0-dev"
 source = "git+https://github.com/apache/datafusion?rev=e2dc8b048b542e7abdc296254aa54e26eb89d76d#e2dc8b048b542e7abdc296254aa54e26eb89d76d"
@@ -687,6 +701,43 @@ dependencies = [
  "parking_lot 0.13.0",
  "pin-project",
  "regex",
+]
+
+[[package]]
+name = "datafusion-physical-plan"
+version = "57.0.0-dev"
+source = "git+https://github.com/apache/datafusion?rev=e2dc8b048b542e7abdc296254aa54e26eb89d76d#e2dc8b048b542e7abdc296254aa54e26eb89d76d"
+dependencies = [
+ "arrow",
+ "arrow-data",
+ "arrow-ipc",
+ "arrow-ord",
+ "arrow-schema",
+ "arrow-select",
+ "async-trait",
+ "bytes",
+ "datafusion-common",
+ "datafusion-common-runtime",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-expr-common",
+ "datafusion-functions",
+ "datafusion-functions-aggregate-common",
+ "datafusion-functions-window-common",
+ "datafusion-physical-expr",
+ "datafusion-physical-expr-common",
+ "futures",
+ "half",
+ "hashbrown 0.17.1",
+ "indexmap",
+ "itertools",
+ "log",
+ "num-traits",
+ "parking_lot 0.13.0",
+ "pin-project-lite",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
