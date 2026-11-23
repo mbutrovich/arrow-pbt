@@ -14,9 +14,13 @@ arrow-pbt = { path = ".." }
 arrow-schema.workspace = true
 arrow-select.workspace = true
 datafusion-common.workspace = true
+datafusion-execution.workspace = true
 datafusion-expr.workspace = true
 datafusion-physical-expr.workspace = true
+datafusion-physical-plan.workspace = true
+futures.workspace = true
 proptest.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 arrow-buffer.workspace = true

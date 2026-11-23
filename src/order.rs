@@ -4,7 +4,7 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use arrow_array::{Array, ArrayRef, UInt32Array};
+use arrow_array::{Array, ArrayRef, BinaryArray, StringArray, UInt32Array};
 use arrow_row::{RowConverter, SortField};
 use arrow_schema::{DataType, Field, SortOptions};
 use proptest::test_runner::TestCaseError;
@@ -317,6 +317,285 @@ pub fn radix_sort((cols, opts, limit): SortCase) -> R {
             return Err(fail(format!(
                 "radix_sort_to_indices left out row {g}, which sorts before the last row returned"
             )));
+        }
+    }
+    Ok(())
+}
+
+/// The bytes of each row of `a` as `arrow-row` documents them (lib.rs for
+/// integers and booleans, variable.rs for strings and binary), or `None` for
+/// a type this model does not cover. Floats, intervals, nested types and
+/// dictionaries are not covered.
+///
+/// Integers and booleans are a validity byte and the big-endian value with
+/// the sign bit flipped for signed types. A string or binary value is a
+/// sentinel, 8-byte mini-blocks up to 32 bytes and 32-byte blocks after, each
+/// padded with zeros and followed by `0xFF`, or by its length if it is the
+/// last. Descending inverts every byte of a valid value but not a null.
+fn model_rows(a: &dyn Array, o: SortOptions) -> Option<Vec<Vec<u8>>> {
+    use DataType as D;
+    let null_byte = if o.nulls_first { 0u8 } else { 0xFF };
+    let invert = |mut v: Vec<u8>| {
+        if o.descending {
+            v.iter_mut().for_each(|b| *b = !*b);
+        }
+        v
+    };
+    let dt = a.data_type();
+    let signed = matches!(
+        dt,
+        D::Int8
+            | D::Int16
+            | D::Int32
+            | D::Int64
+            | D::Date32
+            | D::Date64
+            | D::Time32(_)
+            | D::Time64(_)
+            | D::Timestamp(..)
+            | D::Duration(_)
+            | D::Decimal128(..)
+            | D::Decimal256(..)
+    );
+    let unsigned = matches!(
+        dt,
+        D::UInt8 | D::UInt16 | D::UInt32 | D::UInt64 | D::Boolean
+    );
+    let variable = matches!(
+        dt,
+        D::Utf8 | D::LargeUtf8 | D::Utf8View | D::Binary | D::LargeBinary | D::BinaryView
+    );
+    let width = if *dt == D::Boolean {
+        1
+    } else {
+        dt.primitive_width().unwrap_or(0)
+    };
+    let mut out = Vec::with_capacity(a.len());
+    for v in vals(a) {
+        let row = match v {
+            Val::Null if variable => vec![null_byte],
+            Val::Null if signed || unsigned => {
+                let mut r = vec![null_byte];
+                r.resize(1 + width, 0);
+                r
+            }
+            _ if signed || unsigned => {
+                let mut be = match v {
+                    Val::Bool(b) => vec![b as u8],
+                    Val::I32(x) => x.to_le_bytes().to_vec(),
+                    Val::I64(x) => x.to_le_bytes().to_vec(),
+                    Val::Raw(b) => b,
+                    _ => return None,
+                };
+                be.reverse();
+                if signed {
+                    be[0] ^= 0x80;
+                }
+                let mut r = vec![1];
+                r.extend(be);
+                // The validity byte is not inverted
+                let mut inverted = invert(r.split_off(1));
+                r.append(&mut inverted);
+                r
+            }
+            Val::Str(s) if variable => model_variable(s.as_bytes(), o),
+            Val::Bytes(b) if variable => model_variable(&b, o),
+            _ => return None,
+        };
+        out.push(row);
+    }
+    Some(out)
+}
+
+fn model_variable(v: &[u8], o: SortOptions) -> Vec<u8> {
+    let mut out = vec![if v.is_empty() { 1 } else { 2 }];
+    let (mini, rest) = v.split_at(v.len().min(32));
+    for (blocks, size, more) in [(mini, 8, !rest.is_empty()), (rest, 32, false)] {
+        let count = blocks.len().div_ceil(size);
+        for (i, block) in blocks.chunks(size).enumerate() {
+            out.extend_from_slice(block);
+            out.resize(out.len() + size - block.len(), 0);
+            let last = i + 1 == count && !more;
+            out.push(if last { block.len() as u8 } else { 0xFF });
+        }
+    }
+    if o.descending {
+        out.iter_mut().for_each(|b| *b = !*b);
+    }
+    out
+}
+
+/// Each row equals the model's bytes, column by column and for the whole row
+/// when the model covers every column, and a view or large array encodes the
+/// bytes of the same values in a `Utf8` or `Binary` array
+fn row_bytes_match_format(cols: &[ArrayRef], opts: &[SortOptions], all: &arrow_row::Rows) -> R {
+    let n = cols.first().map_or(0, |c| c.len());
+    let models: Vec<Option<Vec<Vec<u8>>>> = cols
+        .iter()
+        .zip(opts)
+        .map(|(c, o)| model_rows(c.as_ref(), *o))
+        .collect();
+    let converter = |c: &ArrayRef, o: SortOptions| {
+        RowConverter::new(vec![SortField::new_with_options(c.data_type().clone(), o)])
+            .map_err(|e| fail(format!("RowConverter::new: {e}")))
+    };
+    for (c, (col, model)) in cols.iter().zip(&models).enumerate() {
+        let Some(model) = model else { continue };
+        let rows = converter(col, opts[c])?
+            .convert_columns(&[Arc::clone(col)])
+            .map_err(|e| fail(format!("convert_columns: {e}")))?;
+        for (i, want) in model.iter().enumerate() {
+            if rows.row(i).as_ref() != want.as_slice() {
+                return Err(fail(format!(
+                    "column {c} ({}) row {i} of {n}, {:?}: {:?}, the format says {want:?}",
+                    col.data_type(),
+                    vals(col.as_ref())[i],
+                    rows.row(i).as_ref()
+                )));
+            }
+        }
+        // The same values in the array type that does not use views or
+        // 64-bit offsets
+        let plain: Option<ArrayRef> = match col.data_type() {
+            DataType::LargeUtf8 | DataType::Utf8View => Some(Arc::new(StringArray::from_iter(
+                vals(col.as_ref()).iter().map(|v| match v {
+                    Val::Str(s) => Some(s.as_str()),
+                    _ => None,
+                }),
+            ))),
+            DataType::LargeBinary | DataType::BinaryView => Some(Arc::new(BinaryArray::from_iter(
+                vals(col.as_ref()).iter().map(|v| match v {
+                    Val::Bytes(b) => Some(b.as_slice()),
+                    _ => None,
+                }),
+            ))),
+            _ => None,
+        };
+        if let Some(plain) = plain {
+            let rows_plain = converter(&plain, opts[c])?
+                .convert_columns(&[plain])
+                .map_err(|e| fail(format!("convert_columns: {e}")))?;
+            for i in 0..n {
+                if rows.row(i).as_ref() != rows_plain.row(i).as_ref() {
+                    return Err(fail(format!(
+                        "column {c} ({}) row {i} of {n}: {:?}, {:?} as Utf8 or Binary",
+                        col.data_type(),
+                        rows.row(i).as_ref(),
+                        rows_plain.row(i).as_ref()
+                    )));
+                }
+            }
+        }
+    }
+    if models.iter().all(Option::is_some) {
+        for i in 0..n {
+            let want: Vec<u8> = models.iter().flatten().flat_map(|m| m[i].clone()).collect();
+            if all.row(i).as_ref() != want.as_slice() {
+                return Err(fail(format!(
+                    "row {i} of {n}: {:?}, the format says {want:?}",
+                    all.row(i).as_ref()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Each row's bytes depend on the row alone: row `i` of one conversion equals
+/// the row from converting that row by itself, the rows of a conversion of
+/// a slice at a nonzero offset equal the same rows of the whole, and rows
+/// appended to existing rows equal the rows of one conversion. This checks
+/// the bytes, which the order and the round trip in `row_format` do not, and
+/// that fixed-width columns encode the same bytes in the block-at-a-time
+/// encoder and the general one. Rows also equal the bytes `model_rows` writes
+/// from the format's documentation, and view and large arrays equal the same
+/// values in a `Utf8` or `Binary` array
+pub fn row_encode((cols, opts, split): SortCase) -> R {
+    let n = cols.first().map_or(0, |c| c.len());
+    let fields = cols
+        .iter()
+        .zip(&opts)
+        .map(|(c, o)| SortField::new_with_options(c.data_type().clone(), *o))
+        .collect();
+    let conv = RowConverter::new(fields).map_err(|e| fail(format!("RowConverter::new: {e}")))?;
+    let convert = |cs: &[ArrayRef]| {
+        conv.convert_columns(cs)
+            .map_err(|e| fail(format!("convert_columns: {e}")))
+    };
+    let slices = |from: usize, len: usize| -> Vec<ArrayRef> {
+        cols.iter().map(|c| c.slice(from, len)).collect()
+    };
+    let all = convert(&cols)?;
+    for i in 0..n {
+        let one = convert(&slices(i, 1))?;
+        if all.row(i) != one.row(0) {
+            return Err(fail(format!(
+                "row {i} of {n}: {:?} in one conversion, {:?} converted alone",
+                all.row(i).as_ref(),
+                one.row(0).as_ref()
+            )));
+        }
+    }
+    // When every column is fixed width, a Utf8 column after them makes the
+    // rows variable length, which takes the general encoder. A row's bytes
+    // are its columns' bytes in order, so the fixed columns' bytes must not
+    // change
+    if cols
+        .iter()
+        .all(|c| c.data_type().is_primitive() || c.data_type() == &DataType::Boolean)
+    {
+        let mut with_text = cols.clone();
+        with_text.push(Arc::new(StringArray::from(vec![""; n])));
+        let mut fields: Vec<SortField> = cols
+            .iter()
+            .zip(&opts)
+            .map(|(c, o)| SortField::new_with_options(c.data_type().clone(), *o))
+            .collect();
+        fields.push(SortField::new(DataType::Utf8));
+        let general = RowConverter::new(fields)
+            .map_err(|e| fail(format!("RowConverter::new: {e}")))?
+            .convert_columns(&with_text)
+            .map_err(|e| fail(format!("convert_columns: {e}")))?;
+        for i in 0..n {
+            let (fixed_row, general_row) = (all.row(i), general.row(i));
+            let (fixed, prefix) = (fixed_row.as_ref(), general_row.as_ref());
+            if prefix.get(..fixed.len()) != Some(fixed) {
+                return Err(fail(format!(
+                    "row {i} of {n}: {fixed:?} for fixed-width columns, {prefix:?} with a Utf8 column after them"
+                )));
+            }
+        }
+    }
+    row_bytes_match_format(&cols, &opts, &all)?;
+    let k = split.unwrap_or(n / 2).min(n);
+    let (head, tail) = (convert(&slices(0, k))?, convert(&slices(k, n - k))?);
+    let mut appended = conv.empty_rows(0, 0);
+    conv.append(&mut appended, &slices(0, k))
+        .map_err(|e| fail(format!("append: {e}")))?;
+    conv.append(&mut appended, &slices(k, n - k))
+        .map_err(|e| fail(format!("append: {e}")))?;
+    if appended.num_rows() != n || head.num_rows() != k || tail.num_rows() != n - k {
+        return Err(fail(format!("row counts for {n} rows split at {k}")));
+    }
+    for i in 0..n {
+        let part = if i < k { head.row(i) } else { tail.row(i - k) };
+        if part != all.row(i) {
+            return Err(fail(format!(
+                "row {i} of {n}: converting a slice split at {k} gives different bytes"
+            )));
+        }
+        if appended.row(i) != all.row(i) {
+            return Err(fail(format!(
+                "row {i} of {n}: appending after {k} rows gives different bytes"
+            )));
+        }
+    }
+    let back = conv
+        .convert_rows(&appended)
+        .map_err(|e| fail(format!("convert_rows: {e}")))?;
+    for (c, b) in back.iter().enumerate() {
+        if vals(b.as_ref()) != vals(cols[c].as_ref()) {
+            return Err(fail(format!("convert_rows of appended rows, column {c}")));
         }
     }
     Ok(())

@@ -776,6 +776,63 @@ pub fn sort_columns() -> BoxedStrategy<SortCase> {
         .boxed()
 }
 
+/// One to four flat columns, half the cases of only fixed-width types, which
+/// the row format encodes a block of rows at a time, with row counts around
+/// the 16 KiB blocks it writes (`STRIDED_BLOCK_BYTES` in arrow-row) and a
+/// split point
+pub fn row_encode_columns() -> BoxedStrategy<SortCase> {
+    let opts = (any::<bool>(), any::<bool>()).prop_map(|(descending, nulls_first)| SortOptions {
+        descending,
+        nulls_first,
+    });
+    let n = prop_oneof![
+        1 => len(),
+        3 => select(vec![400usize, 861, 862, 863, 1024, 1725, 2048, 4096, 5000]),
+        2 => 400..=6000usize,
+    ];
+    let columns = prop_oneof![
+        1 => vec((crate::generator::leaf(), opts.clone()), 1..=4),
+        1 => vec((fixed_only(), opts), 1..=4),
+    ];
+    (columns, n)
+        .prop_flat_map(|(cols, n)| {
+            let built: Vec<_> = cols
+                .iter()
+                .map(|(t, _)| {
+                    (
+                        prop_oneof![1 => rows(t, n), 2 => crate::generator::block_rows(t, n)],
+                        seed(),
+                    )
+                })
+                .collect();
+            let opts: Vec<_> = cols.iter().map(|(_, o)| *o).collect();
+            let types: Vec<GeneratorType> = cols.into_iter().map(|(t, _)| t).collect();
+            let split = prop_oneof![1 => Just(None), 3 => (0..=n).prop_map(Some)];
+            (Just(types), built, Just(opts), split)
+        })
+        .prop_map(|(types, built, opts, split)| {
+            let cols = types
+                .iter()
+                .zip(built)
+                .map(|(t, (r, s))| build(t, &r, s))
+                .collect();
+            (cols, opts, split)
+        })
+        .boxed()
+}
+
+/// Booleans and fixed-width primitives, the types of the row format's
+/// block-at-a-time path
+fn fixed_only() -> BoxedStrategy<GeneratorType> {
+    prop_oneof![
+        3 => Just(GeneratorType::Bool),
+        3 => Just(GeneratorType::I32),
+        2 => Just(GeneratorType::I64),
+        6 => select(crate::generator::value_types()).prop_map(GeneratorType::Prim),
+    ]
+    .boxed()
+}
+
 /// A schema of one to four columns of any types, zero to six batches of it
 /// with their own lengths and layouts, each pushed plainly, through a
 /// filter, through take indices, or as `(batch, row)` pairs into all the
@@ -1177,7 +1234,7 @@ pub fn slice_slice() -> BoxedStrategy<(ArrayRef, usize, usize, usize, usize)> {
 /// quotient steps
 pub fn divisor() -> BoxedStrategy<DivisorCase> {
     use DivisorType::*;
-    select(vec![U32, U64, I32, I64])
+    select(vec![U32, U64, I32, I64, I128, I256])
         .prop_flat_map(|ty| {
             let d = integer(&ty.domain()).prop_filter("a divisor is nonzero", |d| !d.is_zero());
             (Just(ty), d)
@@ -1206,8 +1263,9 @@ fn integer(dom: &Domain) -> BoxedStrategy<BigInt> {
 }
 
 /// 0, 1, -1, and the limits of `dom` and of each narrower width, with the
-/// negation of each lower limit. The divisors' rustdoc names `MIN / -1`,
-/// and `near_powers` holds too many values to draw it often
+/// negation of each lower limit. The divisors' rustdoc names `MIN / -1` and
+/// `MIN / 2^(N - 1)` of a narrower width, and `near_powers` holds too many
+/// values to draw them often
 fn edges(dom: &Domain) -> Vec<BigInt> {
     let mut v: Vec<BigInt> = [0, 1, -1].into_iter().map(BigInt::from).collect();
     for b in narrower(dom) {
