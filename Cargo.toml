@@ -40,26 +40,26 @@ proptest = { version = "1.0", default-features = false, features = ["std"] }
 # the arrow crates DataFusion depends on, and the DataFusion commit under test,
 # which must build on that arrow-rs. `.cargo/config.toml` can override both
 [patch.crates-io]
-arrow = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-arith = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-array = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-buffer = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-cast = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-csv = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-data = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-ipc = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-json = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-ord = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-row = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-schema = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-select = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-arrow-string = { git = "https://github.com/apache/arrow-rs", rev = "d65329d3e71f4276ce41c8675446d178cecfc1fa" }
-datafusion-common = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
-datafusion-execution = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
-datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
-datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
-datafusion-physical-expr = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
-datafusion-physical-plan = { git = "https://github.com/apache/datafusion", rev = "dbc4514bbd8710e384316282606d17a949989a50" }
+arrow = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-arith = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-array = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-buffer = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-cast = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-csv = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-data = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-ipc = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-json = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-ord = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-row = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-schema = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-select = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+arrow-string = { git = "https://github.com/apache/arrow-rs", rev = "6a3f719f1de43137f0ecc2e7de12d4a7a0b13bd5" }
+datafusion-common = { git = "https://github.com/apache/datafusion", rev = "dbb98dedc329a296a5153019b5ccfdf260088c3f" }
+datafusion-execution = { git = "https://github.com/apache/datafusion", rev = "dbb98dedc329a296a5153019b5ccfdf260088c3f" }
+datafusion-expr = { git = "https://github.com/apache/datafusion", rev = "dbb98dedc329a296a5153019b5ccfdf260088c3f" }
+datafusion-functions = { git = "https://github.com/apache/datafusion", rev = "dbb98dedc329a296a5153019b5ccfdf260088c3f" }
+datafusion-physical-expr = { git = "https://github.com/apache/datafusion", rev = "dbb98dedc329a296a5153019b5ccfdf260088c3f" }
+datafusion-physical-plan = { git = "https://github.com/apache/datafusion", rev = "dbb98dedc329a296a5153019b5ccfdf260088c3f" }
 
 [package]
 name = "arrow-pbt"

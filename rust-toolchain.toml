@@ -1,5 +1,5 @@
 # The toolchain arrow-rs pins, so that its lints, which this workspace uses,
 # give the same results here, in CI, and in arrow-rs
 [toolchain]
-channel = "1.99.1"
+channel = "1.100.0"
 components = ["rustfmt", "clippy"]

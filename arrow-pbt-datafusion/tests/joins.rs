@@ -144,9 +144,10 @@ fn perfect_hash_join_agrees_with_hash_map() {
     );
 }
 
-/// apache/datafusion#27399 moves inner, left, right, and full hash joins
-/// to a new path behind `enable_migration_hash_join`, on by default, and
-/// keeps the old path for one release. Both must give the same rows
+/// Inner, left, right, and full hash joins take the probe path from
+/// apache/datafusion#27399 by default. `enable_migration_hash_join` set to
+/// false falls back to the previous path until the migration in
+/// apache/datafusion#26361 is complete. Both must give the same rows
 #[test]
 fn migration_hash_join_agrees_with_legacy() {
     let options = [("datafusion.execution.enable_migration_hash_join", "false")];
