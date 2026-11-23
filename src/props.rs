@@ -588,13 +588,15 @@ pub fn bools((a, b): (BooleanArray, BooleanArray)) -> R {
     Ok(())
 }
 
-/// Known: `take` rejects a null index into a struct or fixed-size list
-/// whose run-end encoded or union child cannot hold a null, though the
-/// parent's validity can (apache/arrow-rs#11608, the follow-up agreed in
-/// apache/arrow-rs#10994). A type that cannot hold a null at its top level is checked
-/// before this, so the error here comes from a child. The message alone
-/// would also match that error from a top-level array, so the case must
-/// have such a parent
+/// Known: `take` rejects a null index into an empty struct or fixed-size
+/// list whose run-end encoded or union child cannot hold a null, though the
+/// parent's validity can (apache/arrow-rs#12425). apache/arrow-rs#12365 fixed
+/// apache/arrow-rs#11608 for non-empty parents only. An empty parent includes an intermediate
+/// result, such as `take(a, i)` with an empty `i` in `law_take_take`, so the
+/// filter cannot check the length. A type that cannot hold a null at its top
+/// level is checked before this, so the error here comes from a child. The
+/// message alone would also match that error from a top-level array, so the
+/// case must have such a parent
 fn known_take_null_under_parent(r: R, inputs: &[ArrayRef]) -> R {
     let child_cannot_hold = |f: &FieldRef| {
         matches!(
@@ -613,7 +615,7 @@ fn known_take_null_under_parent(r: R, inputs: &[ArrayRef]) -> R {
                 && inputs.iter().any(|a| any_type(a.data_type(), &parent)) =>
         {
             Err(known(
-                "known: take rejects a null index a parent could hold (apache/arrow-rs#11608)",
+                "known: take rejects a null index an empty parent could hold (apache/arrow-rs#12425)",
             ))
         }
         r => r,
