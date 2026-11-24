@@ -15,6 +15,8 @@ use std::cell::Cell;
 
 use crate::spec;
 
+pub use crate::order::check_ascending;
+
 /// The logical value of one row, which [`vals`] reads and models are written
 /// in. A dictionary or run-end encoded row reads as its value, and a null
 /// union row reads as `Null`, without its type id
