@@ -1,18 +1,24 @@
-//! Laws for DataFusion's joins. The agreement law: a hash join and a nested
-//! loop join of the same inputs give the same rows. The config law: a hash
-//! join gives the same rows under two session configs.
+//! Laws for DataFusion's joins. The agreement law: a hash join or a
+//! sort-merge join gives the same rows as a nested loop join of the same
+//! inputs. The config law: a hash join gives the same rows under two session
+//! configs.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use arrow_array::cast::AsArray;
+use arrow_array::types::{Float32Type, Float64Type};
 use arrow_pbt::known::{known, ree_values_nullable};
 use arrow_pbt::run::{caught, check};
 use arrow_pbt::types::{any_type, is_view_dict};
 use arrow_pbt_datafusion::{
-    JoinCase, JoinPlan, check_join_agreement, check_join_config, hash_join, joins, nested_loop_join,
+    JoinCase, JoinPlan, check_join_agreement, check_join_config, hash_join, joins,
+    nested_loop_join, sort_merge_join, sort_merge_joins,
 };
-use arrow_schema::{DataType, Field, Fields, TimeUnit};
+use arrow_schema::{DataType, Field, Fields, SortOptions, TimeUnit};
 use datafusion_common::{JoinType, NullEquality};
+use datafusion_physical_plan::ExecutionPlan;
+use proptest::strategy::BoxedStrategy;
 use proptest::test_runner::TestCaseError;
 
 /// Key types for which DataFusion's hash join and nested loop join both
@@ -109,6 +115,60 @@ fn null_padding(r: Result<(), TestCaseError>) -> Result<(), TestCaseError> {
     }
 }
 
+/// Known: DataFusion's sort puts `-0.0` before `0.0`, but the sort-merge
+/// join compares them as equal. When another key follows a float key, the
+/// sorted inputs are then out of order for the join, which misses matches:
+/// `(-0.0, 5), (0.0, 1)` joined with `(0.0, 1)` on both keys gives no rows
+/// (apache/datafusion#26115 reports it for nested keys, and
+/// apache/datafusion#26138 for multi-column ones). Found by the agreement law
+/// on DataFusion `main` at dbb98dedc3, with arrow-rs `main` at 6a3f719f1d
+fn signed_zero_order(case: &JoinCase, r: Result<(), TestCaseError>) -> Result<(), TestCaseError> {
+    match &r {
+        Err(TestCaseError::Fail(m))
+            if m.message().contains("the rows differ") && zeros_before_a_key(case) =>
+        {
+            Err(known(
+                "known: sorting puts -0.0 before 0.0, which a sort-merge join compares equal (apache/datafusion#26115)",
+            ))
+        }
+        _ => r,
+    }
+}
+
+/// Whether a float key other than the last holds both `-0.0` and `0.0` on
+/// one side
+fn zeros_before_a_key(case: &JoinCase) -> bool {
+    let zeros = |values: &mut dyn Iterator<Item = f64>, signs: &mut [bool; 2]| {
+        for v in values.filter(|v| *v == 0.0) {
+            signs[usize::from(v.is_sign_negative())] = true;
+        }
+    };
+    (0..case.keys.saturating_sub(1)).any(|key| {
+        [&case.left, &case.right].iter().any(|side| {
+            let mut signs = [false; 2];
+            for batch in *side {
+                let a = batch.columns[key].build();
+                match a.data_type() {
+                    DataType::Float32 => zeros(
+                        &mut a
+                            .as_primitive::<Float32Type>()
+                            .iter()
+                            .flatten()
+                            .map(f64::from),
+                        &mut signs,
+                    ),
+                    DataType::Float64 => zeros(
+                        &mut a.as_primitive::<Float64Type>().iter().flatten(),
+                        &mut signs,
+                    ),
+                    _ => {}
+                }
+            }
+            signs == [true, true]
+        })
+    })
+}
+
 fn agree(case: &JoinCase, a: &JoinPlan, b: &JoinPlan) -> Result<(), TestCaseError> {
     filtered(case, || check_join_agreement(case, a, b))
 }
@@ -144,6 +204,19 @@ fn perfect_hash_join_agrees_with_hash_map() {
     );
 }
 
+/// The sort-merge join reads inputs sorted on their keys with drawn sort
+/// options, and the nested loop join reads the same sorted inputs
+#[test]
+fn sort_merge_join_agrees_with_nested_loop_join() {
+    check(
+        "sort-merge join against nested loop join",
+        || sort_merge_joins(&key_types()).unwrap(),
+        |case: JoinCase| {
+            signed_zero_order(&case, agree(&case, &sort_merge_join, &nested_loop_join))
+        },
+    );
+}
+
 /// Inner, left, right, and full hash joins take the probe path from
 /// apache/datafusion#27399 by default. `enable_migration_hash_join` set to
 /// false falls back to the previous path until the migration in
@@ -158,9 +231,17 @@ fn migration_hash_join_agrees_with_legacy() {
     );
 }
 
-/// A hash join of the case's inputs with a mistake in how it is built
-fn broken(mistake: fn(&JoinCase) -> JoinCase) -> Box<JoinPlan> {
-    Box::new(move |case, left, right| hash_join(&mistake(case), left, right))
+/// A way to build a join, as `hash_join` and `sort_merge_join` are
+type Build = fn(
+    &JoinCase,
+    Arc<dyn ExecutionPlan>,
+    Arc<dyn ExecutionPlan>,
+) -> datafusion_common::Result<Arc<dyn ExecutionPlan>>;
+
+/// The join `build` makes of the case's inputs, with a mistake in how it is
+/// built. The inputs come from the case without the mistake
+fn broken(build: Build, mistake: fn(&JoinCase) -> JoinCase) -> Box<JoinPlan> {
+    Box::new(move |case, left, right| build(&mistake(case), left, right))
 }
 
 /// The agreement law finds joins broken on purpose, and the failure says
@@ -182,18 +263,37 @@ fn finds_broken_joins() {
         filter: false,
         ..c.clone()
     };
-    for (name, mistake) in [
-        ("null equality", flip_nulls as fn(&JoinCase) -> JoinCase),
-        ("inner join", always_inner),
-        ("no filter", no_filter),
+    // The join reads its inputs in the reverse of the order they are sorted in
+    let flip_order = |c: &JoinCase| JoinCase {
+        sort_options: c.sort_options.as_ref().map(|options| {
+            options
+                .iter()
+                .map(|o| SortOptions::new(!o.descending, o.nulls_first))
+                .collect()
+        }),
+        ..c.clone()
+    };
+    type Mistake = fn(&JoinCase) -> JoinCase;
+    type Cases = fn() -> BoxedStrategy<JoinCase>;
+    let hash: (&str, Build, Cases) = ("hash join", hash_join, || joins(&key_types()).unwrap());
+    let merge: (&str, Build, Cases) = ("sort-merge join", sort_merge_join, || {
+        sort_merge_joins(&key_types()).unwrap()
+    });
+    for ((join, build, cases), (name, mistake)) in [
+        (hash, ("null equality", flip_nulls as Mistake)),
+        (hash, ("inner join", always_inner)),
+        (hash, ("no filter", no_filter)),
+        (merge, ("null equality", flip_nulls)),
+        (merge, ("inner join", always_inner)),
+        (merge, ("no filter", no_filter)),
+        (merge, ("sort order", flip_order)),
     ] {
-        let plan = broken(mistake);
+        let name = format!("{join}, {name}");
+        let plan = broken(build, mistake);
         let found = catch_unwind(AssertUnwindSafe(|| {
-            check(
-                "broken",
-                || joins(&key_types()).unwrap(),
-                |case: JoinCase| agree(&case, &*plan, &nested_loop_join),
-            );
+            check("broken", cases, |case: JoinCase| {
+                agree(&case, &*plan, &nested_loop_join)
+            });
         }));
         let Err(p) = found else {
             panic!("{name}: not found");
