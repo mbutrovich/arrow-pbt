@@ -128,6 +128,92 @@ fn ord_rows_with(
         .unwrap_or(Ordering::Equal)
 }
 
+/// Checks that the rows of `chunks` ascend in the order of `options`:
+/// lexicographic over the columns, each compared as [`ord_with`] defines,
+/// which is the order `lexsort` sorts by (floats in IEEE totalOrder, so
+/// `-0.0` before `0.0`). `chunks` are consecutive pieces of the same columns,
+/// such as the batches of a stream, so the order must also hold from the last
+/// row of one chunk to the first row of the next. Rows that compare equal may
+/// come in any order
+///
+/// # Errors
+///
+/// A failure that names the first two rows out of order, or a chunk whose
+/// columns do not match `options` in number, row count, or type
+///
+/// # Example
+///
+/// ```
+/// use std::sync::Arc;
+/// use arrow_array::{ArrayRef, Int32Array};
+/// use arrow_pbt::val::check_ascending;
+/// use arrow_schema::SortOptions;
+/// let up: ArrayRef = Arc::new(Int32Array::from(vec![1, 2]));
+/// let zero: ArrayRef = Arc::new(Int32Array::from(vec![0]));
+/// let ascending = [SortOptions::default()];
+/// assert!(check_ascending(&[vec![up.clone()]], &ascending).is_ok());
+/// // Each chunk ascends, but 0 follows 2 across the boundary
+/// assert!(check_ascending(&[vec![up.clone()], vec![zero]], &ascending).is_err());
+/// assert!(check_ascending(&[vec![up]], &[SortOptions::new(true, false)]).is_err());
+/// ```
+pub fn check_ascending(
+    chunks: &[Vec<ArrayRef>],
+    options: &[SortOptions],
+) -> Result<(), TestCaseError> {
+    let Some(first) = chunks.first() else {
+        return Ok(());
+    };
+    let types: Vec<DataType> = first.iter().map(|c| c.data_type().clone()).collect();
+    fn row(a: &[Vec<Val>], i: usize) -> Vec<&Val> {
+        a.iter().map(|c| &c[i]).collect()
+    }
+    // The previous non-empty chunk's values, for the boundary
+    let mut previous: Option<(usize, Vec<Vec<Val>>)> = None;
+    for (k, chunk) in chunks.iter().enumerate() {
+        let n = chunk.first().map_or(0, |c| c.len());
+        if chunk.len() != options.len()
+            || chunk.iter().any(|c| c.len() != n)
+            || chunk.iter().map(|c| c.data_type()).ne(types.iter())
+        {
+            return Err(fail(format!(
+                "chunk {k} has columns of types {:?} and lengths {:?}, for {} sort options over {types:?}",
+                chunk.iter().map(|c| c.data_type()).collect::<Vec<_>>(),
+                chunk.iter().map(|c| c.len()).collect::<Vec<_>>(),
+                options.len()
+            )));
+        }
+        if n == 0 {
+            continue;
+        }
+        let v: Vec<Vec<Val>> = chunk.iter().map(|c| vals(c.as_ref())).collect();
+        let ord = |a: &[Vec<Val>], i: usize, b: &[Vec<Val>], j: usize| {
+            (0..types.len())
+                .map(|c| ord_with(&types[c], &a[c][i], &b[c][j], options[c], false))
+                .find(|o| o.is_ne())
+                .unwrap_or(Ordering::Equal)
+        };
+        if let Some((last, p)) = &previous
+            && ord(p, *last, &v, 0).is_gt()
+        {
+            return Err(fail(format!(
+                "the last row of a chunk before chunk {k}, {:?}, sorts after the first row of chunk {k}, {:?}",
+                row(p, *last),
+                row(&v, 0)
+            )));
+        }
+        if let Some(i) = (1..n).find(|&i| ord(&v, i - 1, &v, i).is_gt()) {
+            return Err(fail(format!(
+                "chunk {k}: row {}, {:?}, sorts after row {i}, {:?}",
+                i - 1,
+                row(&v, i - 1),
+                row(&v, i)
+            )));
+        }
+        previous = Some((n - 1, v));
+    }
+    Ok(())
+}
+
 /// The rows of the columns in the oracle's order. Rows that compare equal
 /// have equal values, so the sorted values do not depend on how ties break
 fn oracle_sorted(

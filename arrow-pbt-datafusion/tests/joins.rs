@@ -1,23 +1,32 @@
 //! Laws for DataFusion's joins. The agreement law: a hash join or a
 //! sort-merge join gives the same rows as a nested loop join of the same
 //! inputs. The config law: a hash join gives the same rows under two session
-//! configs.
+//! configs. The order law: a sort-merge join returns its rows in the output
+//! ordering its plan states.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use arrow_array::RecordBatch;
 use arrow_array::cast::AsArray;
 use arrow_array::types::{Float32Type, Float64Type};
+use arrow_pbt::generator::GeneratedBatch;
 use arrow_pbt::known::{known, ree_values_nullable};
 use arrow_pbt::run::{caught, check};
 use arrow_pbt::types::{any_type, is_view_dict};
 use arrow_pbt_datafusion::{
-    JoinCase, JoinPlan, check_join_agreement, check_join_config, hash_join, joins,
-    nested_loop_join, sort_merge_join, sort_merge_joins,
+    JoinCase, JoinPlan, check_join_agreement, check_join_config, check_join_order, hash_join,
+    joins, nested_loop_join, sort_merge_join, sort_merge_joins,
 };
+use arrow_schema::SchemaRef;
 use arrow_schema::{DataType, Field, Fields, SortOptions, TimeUnit};
 use datafusion_common::{JoinType, NullEquality};
+use datafusion_execution::{SendableRecordBatchStream, TaskContext};
+use datafusion_physical_expr::expressions::Column;
+use datafusion_physical_expr::{LexOrdering, PhysicalSortExpr};
 use datafusion_physical_plan::ExecutionPlan;
+use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion_physical_plan::streaming::{PartitionStream, StreamingTableExec};
 use proptest::strategy::BoxedStrategy;
 use proptest::test_runner::TestCaseError;
 
@@ -217,6 +226,17 @@ fn sort_merge_join_agrees_with_nested_loop_join() {
     );
 }
 
+/// The sort-merge join's inputs declare the order they are sorted in, and
+/// the join's plan derives its output ordering from theirs
+#[test]
+fn sort_merge_join_keeps_its_output_order() {
+    check(
+        "sort-merge join output order",
+        || sort_merge_joins(&key_types()).unwrap(),
+        |case: JoinCase| filtered(&case, || check_join_order(&case, &sort_merge_join)),
+    );
+}
+
 /// Inner, left, right, and full hash joins take the probe path from
 /// apache/datafusion#27399 by default. `enable_migration_hash_join` set to
 /// false falls back to the previous path until the migration in
@@ -301,6 +321,60 @@ fn finds_broken_joins() {
         let message = p.downcast_ref::<String>().cloned().unwrap_or_default();
         assert!(message.contains("differ"), "{name}: {message}");
     }
+}
+
+/// A partition that yields a side's batches as drawn
+#[derive(Debug)]
+struct Drawn(SchemaRef, Vec<RecordBatch>);
+
+impl PartitionStream for Drawn {
+    fn schema(&self) -> &SchemaRef {
+        &self.0
+    }
+
+    fn execute(&self, _: Arc<TaskContext>) -> SendableRecordBatchStream {
+        let batches = self.1.clone().into_iter().map(Ok);
+        Box::pin(RecordBatchStreamAdapter::new(
+            Arc::clone(&self.0),
+            futures::stream::iter(batches),
+        ))
+    }
+}
+
+/// The order law finds a sort-merge join whose left input declares the
+/// case's key order but yields its rows as drawn. The join keeps the order
+/// of its left input for the join types that stream it, so its output is
+/// out of the order it states
+#[test]
+fn finds_misordered_output() {
+    let plan: Box<JoinPlan> = Box::new(|case, _, right| {
+        let schema = &case.left_schema;
+        let ordering = LexOrdering::new(case.sort_options.iter().flatten().enumerate().map(
+            |(i, &o)| PhysicalSortExpr::new(Arc::new(Column::new(schema.field(i).name(), i)), o),
+        ));
+        let batches = case.left.iter().map(GeneratedBatch::build).collect();
+        let left = StreamingTableExec::try_new(
+            Arc::clone(schema),
+            vec![Arc::new(Drawn(Arc::clone(schema), batches))],
+            None,
+            ordering,
+            false,
+            None,
+        )?;
+        sort_merge_join(case, Arc::new(left), right)
+    });
+    let found = catch_unwind(AssertUnwindSafe(|| {
+        check(
+            "misordered",
+            || sort_merge_joins(&key_types()).unwrap(),
+            |case: JoinCase| filtered(&case, || check_join_order(&case, &*plan)),
+        );
+    }));
+    let Err(p) = found else {
+        panic!("not found");
+    };
+    let message = p.downcast_ref::<String>().cloned().unwrap_or_default();
+    assert!(message.contains("sorts after"), "{message}");
 }
 
 /// A key type the generator cannot build, or no key types, is an error

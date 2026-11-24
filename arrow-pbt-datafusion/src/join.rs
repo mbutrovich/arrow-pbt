@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use arrow_array::{Array, RecordBatch};
 use arrow_pbt::generator::{GeneratedBatch, ValueDomain, pooled_batch, schemas, value_pool};
-use arrow_pbt::val::{Val, check_rows, vals};
+use arrow_pbt::val::{Val, check_ascending, check_rows, vals};
 use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef, SortOptions};
 use arrow_select::concat::concat_batches;
 use datafusion_common::{DataFusionError, JoinSide, JoinType, NullEquality, plan_err};
@@ -460,13 +460,18 @@ pub fn source(
     schema: &SchemaRef,
     batches: &[GeneratedBatch],
 ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
-    table(schema, batches.iter().map(GeneratedBatch::build).collect())
+    table(
+        schema,
+        batches.iter().map(GeneratedBatch::build).collect(),
+        None,
+    )
 }
 
 /// An input of one partition that yields the rows of `batches` sorted on
 /// their first `options.len()` columns, the first by `options[0]` and so on,
-/// by DataFusion's `sort_batch`. Each batch keeps its number of rows, so the
-/// sorted rows split where the drawn ones did
+/// by DataFusion's `sort_batch`, and declares that order as its output
+/// ordering. Each batch keeps its number of rows, so the sorted rows split
+/// where the drawn ones did
 ///
 /// # Errors
 ///
@@ -518,13 +523,15 @@ pub fn sorted_source(
             slice
         })
         .collect();
-    table(schema, split)
+    table(schema, split, Some(ordering))
 }
 
-/// A one-partition `StreamingTableExec` that yields `batches`
+/// A one-partition `StreamingTableExec` that yields `batches`, in `ordering`
+/// if there is one
 fn table(
     schema: &SchemaRef,
     batches: Vec<RecordBatch>,
+    ordering: Option<LexOrdering>,
 ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
     let partition = Batches {
         schema: Arc::clone(schema),
@@ -534,7 +541,7 @@ fn table(
         Arc::clone(schema),
         vec![Arc::new(partition)],
         None,
-        vec![],
+        ordering,
         false,
         None,
     )?))
@@ -608,6 +615,52 @@ pub fn check_join_config(
     )
 }
 
+/// Checks the order law: the join `plan` of `case` returns its rows in the
+/// output ordering its plan states, as `arrow_pbt::val::check_ascending`
+/// checks it across all of its batches. A join that states no output
+/// ordering passes, and a join that fails is a discard, since
+/// [`check_join_agreement`] checks failures
+///
+/// # Errors
+///
+/// A failure that names the first two rows out of order, or a discard when
+/// the join fails
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt_datafusion::{check_join_order, sort_merge_join, sort_merge_joins};
+/// use arrow_schema::DataType;
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let case = sort_merge_joins(&[DataType::Int32]).unwrap().new_tree(&mut runner).unwrap().current();
+/// assert!(check_join_order(&case, &sort_merge_join).is_ok());
+/// ```
+pub fn check_join_order(case: &JoinCase, plan: &JoinPlan) -> Result<(), TestCaseError> {
+    let Ok((join, batches)) = execute(case, plan, &[])? else {
+        return Err(TestCaseError::reject("the join fails"));
+    };
+    let Some(ordering) = join.properties().output_ordering() else {
+        return Ok(());
+    };
+    let options: Vec<SortOptions> = ordering.iter().map(|e| e.options).collect();
+    let chunks = batches
+        .iter()
+        .map(|b| {
+            ordering
+                .iter()
+                .map(|e| e.expr.evaluate(b)?.into_array(b.num_rows()))
+                .collect::<datafusion_common::Result<Vec<_>>>()
+        })
+        .collect::<datafusion_common::Result<Vec<_>>>()
+        .map_err(|e| fail(format!("evaluating the output ordering {ordering}: {e}")))?;
+    check_ascending(&chunks, &options).map_err(|e| match e {
+        TestCaseError::Fail(m) => fail(format!("output ordering {ordering}: {}", m.message())),
+        TestCaseError::Reject(r) => TestCaseError::Reject(r),
+    })
+}
+
 /// A join's output: its schema and its rows, each as the oracle's values
 /// in `Debug` form, sorted, so that equal multisets compare equal
 type Output = (SchemaRef, Vec<String>);
@@ -618,6 +671,24 @@ fn outcome(
     plan: &JoinPlan,
     options: &[(&str, &str)],
 ) -> Result<Result<Output, DataFusionError>, TestCaseError> {
+    match execute(case, plan, options)? {
+        Err(e) => Ok(Err(e)),
+        Ok((join, batches)) => {
+            let schema = join.schema();
+            Ok(Ok((Arc::clone(&schema), rows(&schema, &batches)?)))
+        }
+    }
+}
+
+/// The join `plan` of `case` with `options` set, and the batches it returns
+type Executed = (Arc<dyn ExecutionPlan>, Vec<RecordBatch>);
+
+/// Builds the join `plan` of `case` with `options` set, and runs it
+fn execute(
+    case: &JoinCase,
+    plan: &JoinPlan,
+    options: &[(&str, &str)],
+) -> Result<Result<Executed, DataFusionError>, TestCaseError> {
     let mut config = SessionConfig::new().with_batch_size(case.batch_size);
     for (key, value) in options {
         config
@@ -636,20 +707,17 @@ fn outcome(
     let (left, right) = input(&case.left_schema, &case.left)
         .and_then(|l| Ok((l, input(&case.right_schema, &case.right)?)))
         .map_err(|e| fail(format!("building the inputs: {e}")))?;
-    let run = || -> datafusion_common::Result<(SchemaRef, Vec<RecordBatch>)> {
+    let run = || -> datafusion_common::Result<Executed> {
         let join = plan(case, left, right)?;
-        let schema = join.schema();
         // A current-thread runtime keeps DataFusion's tasks on this thread,
         // off the other workers of the seed pool
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        Ok((schema, runtime.block_on(collect(join, context))?))
+        let batches = runtime.block_on(collect(Arc::clone(&join), context))?;
+        Ok((join, batches))
     };
-    match run() {
-        Err(e) => Ok(Err(e)),
-        Ok((schema, batches)) => Ok(Ok((Arc::clone(&schema), rows(&schema, &batches)?))),
-    }
+    Ok(run())
 }
 
 /// The rows of `batches`, checked to be valid output of `schema`
