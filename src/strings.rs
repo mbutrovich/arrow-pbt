@@ -66,7 +66,9 @@ pub fn length_prop(a: ArrayRef) -> R {
 }
 
 /// The characters of `s` from `start` (negative counts from the end) for
-/// `len` characters, as `substring_by_char` documents
+/// `len` characters, as `substring_by_char` documents. A start past either
+/// end clamps to it, and the length counts from the clamped start. The
+/// rustdoc does not say this, and arrow-string's code does
 fn sub_chars(s: &str, start: i64, len: Option<u64>) -> String {
     let cs: Vec<char> = s.chars().collect();
     let n = cs.len() as i64;

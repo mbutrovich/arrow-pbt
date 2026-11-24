@@ -610,25 +610,30 @@ fn as_oracle<T: ArrowPrimitiveType>(dt: &DataType, x: T::Native) -> Val {
     )
 }
 
-/// Floats: min and max by IEEE total order, which apache/arrow-rs#5031
-/// settled on. It puts a NaN with the sign bit set below every other value,
-/// although the rustdoc says NaN is greater than any other value
-fn float_min_max(name: &str, got: Option<f64>, xs: &[f64], want_max: bool) -> R {
-    let want = if want_max {
-        xs.iter().copied().max_by(f64::total_cmp)
-    } else {
-        xs.iter().copied().min_by(f64::total_cmp)
-    };
-    // Neither apache/arrow-rs#5031 nor the rustdoc says which NaN payload wins, so any NaN
-    // of the expected sign matches
-    let key = |x: f64| {
-        if x.is_nan() {
-            (true, x.is_sign_negative(), 0)
-        } else {
-            (false, false, x.to_bits())
+/// Floats: min and max by IEEE 754 totalOrder, as the rustdoc of `min` and
+/// `max` documents with a reference to `f64::total_cmp`. totalOrder also
+/// orders NaNs by sign and payload, so the result must have the expected
+/// bits. The order is taken at the input's own width, because widening an
+/// f32 to f64 can quiet a signaling NaN
+fn float_min_max(name: &str, got: Option<Val>, xs: &[&Val], want_max: bool) -> R {
+    // The key `f32::total_cmp` and `f64::total_cmp` compare
+    let key = |v: &&&Val| match v {
+        Val::Raw(b) if b.len() == 4 => {
+            let x = i32::from_le_bytes(b[..].try_into().unwrap());
+            i64::from(x ^ (((x >> 31) as u32) >> 1) as i32)
         }
+        Val::Raw(b) => {
+            let x = i64::from_le_bytes(b[..].try_into().unwrap());
+            x ^ (((x >> 63) as u64) >> 1) as i64
+        }
+        v => panic!("not a float: {v:?}"),
     };
-    if got.map(key) != want.map(key) {
+    let want = if want_max {
+        xs.iter().max_by_key(key)
+    } else {
+        xs.iter().min_by_key(key)
+    };
+    if got.as_ref() != want.copied() {
         return Err(fail(format!("{name}: got {got:?}, expected {want:?}")));
     }
     Ok(())
@@ -642,17 +647,15 @@ fn primitive<T: ArrowNumericType>(a: &dyn Array, v: &[Val]) -> R {
     let valid: Vec<&Val> = v.iter().filter(|x| **x != Val::Null).collect();
     let to_val = |x: Option<T::Native>| x.map(|x| as_oracle::<T>(dt, x));
     if dt.is_floating() {
-        let xs: Vec<f64> = valid.iter().map(|x| x.as_f64()).collect();
-        let f = |x: Option<T::Native>| to_val(x).map(|v| v.as_f64());
-        float_min_max("min", f(agg::min(p)), &xs, false)?;
-        float_min_max("max", f(agg::max(p)), &xs, true)?;
+        float_min_max("min", to_val(agg::min(p)), &valid, false)?;
+        float_min_max("max", to_val(agg::max(p)), &valid, true)?;
         // Float sums depend on the order of addition, so only their presence
         // is checked
-        if agg::sum(p).is_some() == xs.is_empty() {
+        if agg::sum(p).is_some() == valid.is_empty() {
             return Err(fail(format!(
                 "sum: {:?} for {} valid rows",
                 agg::sum(p),
-                xs.len()
+                valid.len()
             )));
         }
         return Ok(());
@@ -999,7 +1002,9 @@ fn fixed_point_body((l, r, req): FixedPointCase) -> R {
 
 /// `n` with the decimal point `scale` digits from the right, as
 /// `format_decimal` documents: leading zeros as needed, zeros appended for a
-/// negative scale except to zero, and every digit kept
+/// negative scale, and every digit kept. Zero takes no appended zeros, which
+/// the rustdoc does not say but arrow-data's `write_decimal` does
+/// ("Zero must not be zero-padded")
 fn decimal_string(n: &BigInt, scale: i32) -> String {
     use num_traits::{Signed, Zero};
     let sign = if n.is_negative() { "-" } else { "" };

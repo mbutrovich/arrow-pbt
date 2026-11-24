@@ -370,8 +370,8 @@ pub fn check(d: &ArrayData) -> Result<(), String> {
             }
         }
         DataType::List(_) => offsets::<i32>(d, d.child_data()[0].len())?,
-        // Lines 118-138: a list of entries, where neither the entries nor
-        // their keys may be null
+        // Schema.fbs lines 118-138: a list of entries, where neither the
+        // entries nor their keys may be null
         DataType::Map(..) => {
             offsets::<i32>(d, d.child_data()[0].len())?;
             let entries = &d.child_data()[0];

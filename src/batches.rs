@@ -204,13 +204,16 @@ fn take_record_batch_body((batch, indices): (RecordBatch, Int32Array)) -> R {
         .try_for_each(|c| check_in(c.as_ref()))?;
     check_in(&indices)?;
     let (schema, n) = (batch.schema(), batch.num_rows() as i64);
-    // An index out of bounds is a panic, as `take` documents when bounds are
-    // not checked, or an error
+    // An index out of bounds is an error, as `take_record_batch` documents
     let out_of_bounds = (0..indices.len())
         .find(|&i| indices.is_valid(i) && !(0..n).contains(&(indices.value(i) as i64)));
     if let Some(i) = out_of_bounds {
         return match catch_unwind(AssertUnwindSafe(|| take_record_batch(&batch, &indices))) {
-            Err(_) | Ok(Err(_)) => Ok(()),
+            Ok(Err(_)) => Ok(()),
+            Err(_) => Err(fail(format!(
+                "take_record_batch panicked for index {} of {n} rows",
+                indices.value(i)
+            ))),
             Ok(Ok(out)) => Err(fail(format!(
                 "take_record_batch returned {} rows for index {} of {n} rows",
                 out.num_rows(),

@@ -866,8 +866,11 @@ pub fn interval_fields(b: &[u8]) -> Vec<i64> {
     }
 }
 
-/// The order of two non-null values of type `dt`, as arrow-ord documents it:
-/// IEEE 754 totalOrder for floats, byte order for strings and binary
+/// The order of two non-null values of type `dt`: IEEE 754 totalOrder for
+/// floats, as arrow-ord's `cmp` kernels document, and byte order for strings
+/// and binary, which arrow-ord does not document and Arrow C++ does
+/// (compute.rst: "ordered lexicographically as bytestrings, even for String
+/// types")
 pub fn leaf_cmp(dt: &DataType, a: &Val, b: &Val) -> Ordering {
     use DataType::*;
     match (a, b) {
