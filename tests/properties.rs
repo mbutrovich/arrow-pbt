@@ -275,4 +275,9 @@ mod arrow_ord_and_arrow_row {
     fn row_encode() {
         check("row_encode");
     }
+
+    #[test]
+    fn radix_sort() {
+        check("radix_sort");
+    }
 }

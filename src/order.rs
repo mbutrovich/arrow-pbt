@@ -261,6 +261,67 @@ pub fn row_format((cols, opts, split): SortCase) -> R {
     Ok(())
 }
 
+/// `radix_sort_to_indices` returns the first `limit` rows in the order of
+/// `Rows`, which `row_format` checks against the oracle. The model is the
+/// rows' own order rather than the oracle's, so the union bug
+/// (apache/arrow-rs#11598) does not reach this property
+pub fn radix_sort((cols, opts, limit): SortCase) -> R {
+    use arrow_row::radix::radix_sort_to_indices;
+    for c in &cols {
+        check_in(c.as_ref())?;
+    }
+    let n = cols.first().map_or(0, |c| c.len());
+    let fields = cols
+        .iter()
+        .zip(&opts)
+        .map(|(c, o)| SortField::new_with_options(c.data_type().clone(), *o))
+        .collect();
+    let conv = RowConverter::new(fields).map_err(|e| fail(format!("RowConverter::new: {e}")))?;
+    let rows = conv
+        .convert_columns(&cols)
+        .map_err(|e| fail(format!("convert_columns: {e}")))?;
+    let idx = radix_sort_to_indices(&rows, limit)
+        .map_err(|e| fail(format!("radix_sort_to_indices: {e}")))?;
+    let want = limit.unwrap_or(n).min(n);
+    if idx.len() != want || idx.null_count() > 0 {
+        return Err(fail(format!(
+            "radix_sort_to_indices: {} indices with {} nulls, expected {want}",
+            idx.len(),
+            idx.null_count(),
+        )));
+    }
+    let mut seen = vec![false; n];
+    for (p, &g) in idx.values().iter().enumerate() {
+        let g = g as usize;
+        if g >= n || replace(&mut seen[g], true) {
+            return Err(fail(format!(
+                "radix_sort_to_indices position {p}: row {g} out of range or repeated"
+            )));
+        }
+    }
+    for (p, w) in idx.values().windows(2).enumerate() {
+        let (a, b) = (rows.row(w[0] as usize), rows.row(w[1] as usize));
+        if a > b {
+            return Err(fail(format!(
+                "radix_sort_to_indices positions {p} and {}: row {} > row {}",
+                p + 1,
+                w[0],
+                w[1]
+            )));
+        }
+    }
+    // With a limit, no row left out may sort before the last row returned
+    if let Some(&last) = idx.values().last() {
+        let last = rows.row(last as usize);
+        if let Some(g) = (0..n).find(|&g| !seen[g] && rows.row(g) < last) {
+            return Err(fail(format!(
+                "radix_sort_to_indices left out row {g}, which sorts before the last row returned"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// The bytes of each row of `a` as `arrow-row` documents them (lib.rs for
 /// integers and booleans, variable.rs for strings and binary), or `None` for
 /// a type this model does not cover. Floats, intervals, nested types and

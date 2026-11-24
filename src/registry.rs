@@ -238,6 +238,12 @@ pub fn all_properties() -> Vec<Entry> {
             cases::row_encode_columns,
             order::row_encode,
         ),
+        entry(
+            "radix_sort",
+            "sort_columns",
+            cases::sort_columns,
+            order::radix_sort,
+        ),
     ]
 }
 
