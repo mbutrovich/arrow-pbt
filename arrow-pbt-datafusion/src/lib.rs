@@ -22,8 +22,9 @@ pub use expr::{
     Build, ExprCase, Operand, check_expr_broadcast, check_expr_row_by_row, check_expr_split, exprs,
 };
 pub use join::{
-    JoinCase, JoinPlan, check_join_agreement, check_join_config, check_join_order, hash_join,
-    joins, nested_loop_join, sort_merge_join, sort_merge_joins, sorted_source, source,
+    JoinCase, JoinPlan, Split, check_join_agreement, check_join_config, check_join_fetch,
+    check_join_order, check_join_split, hash_join, joins, nested_loop_join, sort_merge_join,
+    sort_merge_joins, sorted_source, source, splits,
 };
 
 /// One argument of a scalar function call

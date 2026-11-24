@@ -16,10 +16,11 @@ use datafusion_physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion_physical_plan::joins::{
     HashJoinExec, NestedLoopJoinExec, PartitionMode, SortMergeJoinExec,
 };
+use datafusion_physical_plan::repartition::RepartitionExec;
 use datafusion_physical_plan::sorts::sort::sort_batch;
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion_physical_plan::streaming::{PartitionStream, StreamingTableExec};
-use datafusion_physical_plan::{ExecutionPlan, collect};
+use datafusion_physical_plan::{ExecutionPlan, Partitioning, collect};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -51,8 +52,10 @@ pub struct JoinCase {
     pub join_type: JoinType,
     pub null_equality: NullEquality,
     pub filter: bool,
-    /// How a hash join collects its build side. Each side is one partition
+    /// How a hash join collects its build side
     pub partition_mode: PartitionMode,
+    /// How many partitions a hash join runs in (see [`hash_join`])
+    pub partitions: usize,
     pub batch_size: usize,
     /// The sort options of each key when both inputs are sorted on their
     /// keys (see [`sorted_source`]), or `None` when the inputs keep the order
@@ -61,8 +64,9 @@ pub struct JoinCase {
 }
 
 /// Joins on one or two keys of the types in `key_types`, of every join
-/// type, with both null equalities, with and without a residual filter, and
-/// a drawn `batch_size`. Each key field is nullable three times in four, and
+/// type, with both null equalities, with and without a residual filter, in
+/// one partition two times in three and two to four otherwise, and with a
+/// drawn `batch_size`. Each key field is nullable three times in four, and
 /// both sides draw its rows from one [`value_pool`], so rows match and one
 /// probe row can match more build rows than `batch_size`. Each side is zero
 /// to four batches of up to 129 rows, which bounds the output, since it
@@ -115,6 +119,7 @@ pub fn joins(key_types: &[DataType]) -> Result<BoxedStrategy<JoinCase>, String> 
         NullEquality::NullEqualsNull,
     ]);
     let partition_mode = select(vec![PartitionMode::CollectLeft, PartitionMode::Partitioned]);
+    let partitions = prop_oneof![2 => Just(1usize), 1 => 2..=4usize];
     let batch_size = prop_oneof![1..=8usize, select(vec![16usize, 63, 64, 65, 1024, 8192])];
     Ok((vec(key, 1..=2), schemas(), schemas())
         .prop_flat_map(|(keys, left, right)| {
@@ -141,7 +146,7 @@ pub fn joins(key_types: &[DataType]) -> Result<BoxedStrategy<JoinCase>, String> 
                 join_type.clone(),
                 null_equality.clone(),
                 any::<bool>(),
-                partition_mode.clone(),
+                (partition_mode.clone(), partitions.clone()),
                 batch_size.clone(),
             )
         })
@@ -151,7 +156,7 @@ pub fn joins(key_types: &[DataType]) -> Result<BoxedStrategy<JoinCase>, String> 
                 join_type,
                 null_equality,
                 filter,
-                partition_mode,
+                (partition_mode, partitions),
                 batch_size,
             )| JoinCase {
                 left_schema,
@@ -163,6 +168,7 @@ pub fn joins(key_types: &[DataType]) -> Result<BoxedStrategy<JoinCase>, String> 
                 null_equality,
                 filter,
                 partition_mode,
+                partitions,
                 batch_size,
                 sort_options: None,
             },
@@ -249,7 +255,10 @@ fn stream(schema: &SchemaRef, pools: &[Vec<Val>]) -> BoxedStrategy<Vec<Generated
 }
 
 /// A hash join of `case`, on its keys, with its residual filter, null
-/// equality, and partition mode
+/// equality, and partition mode, in `case.partitions` partitions. With more
+/// than one, a partitioned join hash-partitions both inputs on their keys,
+/// and a `CollectLeft` join splits its right input by batch, round robin,
+/// as the planner does for a probe side of any partitioning
 ///
 /// # Example
 ///
@@ -270,8 +279,26 @@ pub fn hash_join(
     left: Arc<dyn ExecutionPlan>,
     right: Arc<dyn ExecutionPlan>,
 ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
-    let on = (0..case.keys)
-        .map(|i| (column(&case.left_schema, i), column(&case.right_schema, i)))
+    let keys = |schema: &Schema| {
+        (0..case.keys)
+            .map(|i| column(schema, i))
+            .collect::<Vec<_>>()
+    };
+    let repartition = |input, partitioning| -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        Ok(Arc::new(RepartitionExec::try_new(input, partitioning)?))
+    };
+    let n = case.partitions;
+    let (left, right) = match case.partition_mode {
+        _ if n <= 1 => (left, right),
+        PartitionMode::Partitioned => (
+            repartition(left, Partitioning::Hash(keys(&case.left_schema), n))?,
+            repartition(right, Partitioning::Hash(keys(&case.right_schema), n))?,
+        ),
+        _ => (left, repartition(right, Partitioning::RoundRobinBatch(n))?),
+    };
+    let on = keys(&case.left_schema)
+        .into_iter()
+        .zip(keys(&case.right_schema))
         .collect();
     Ok(Arc::new(HashJoinExec::try_new(
         left,
@@ -420,11 +447,13 @@ fn join_filter(case: &JoinCase, keys: bool) -> Option<JoinFilter> {
     ))
 }
 
-/// One partition that yields a case's batches
+/// One partition that yields a case's batches, and then an error if it
+/// `fails`
 #[derive(Debug)]
 struct Batches {
     schema: SchemaRef,
     batches: Vec<RecordBatch>,
+    fails: bool,
 }
 
 impl PartitionStream for Batches {
@@ -433,10 +462,16 @@ impl PartitionStream for Batches {
     }
 
     fn execute(&self, _: Arc<TaskContext>) -> SendableRecordBatchStream {
+        let n = self.batches.len();
         let batches = self.batches.clone().into_iter().map(Ok);
+        let error = self.fails.then(|| {
+            Err(DataFusionError::Execution(format!(
+                "read past the {n} batches of an input that fails there"
+            )))
+        });
         Box::pin(RecordBatchStreamAdapter::new(
             Arc::clone(&self.schema),
-            futures::stream::iter(batches),
+            futures::stream::iter(batches.chain(error)),
         ))
     }
 }
@@ -464,6 +499,7 @@ pub fn source(
         schema,
         batches.iter().map(GeneratedBatch::build).collect(),
         None,
+        false,
     )
 }
 
@@ -497,6 +533,37 @@ pub fn sorted_source(
     batches: &[GeneratedBatch],
     options: &[SortOptions],
 ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+    let built: Vec<RecordBatch> = batches.iter().map(GeneratedBatch::build).collect();
+    table(
+        schema,
+        sorted(schema, &built, options)?,
+        Some(key_ordering(schema, options)?),
+        false,
+    )
+}
+
+/// The rows of `built` sorted on their first `options.len()` columns by
+/// DataFusion's `sort_batch`, cut where `built` was
+fn sorted(
+    schema: &SchemaRef,
+    built: &[RecordBatch],
+    options: &[SortOptions],
+) -> datafusion_common::Result<Vec<RecordBatch>> {
+    let sorted = sort_batch(
+        &concat_batches(schema, built)?,
+        &key_ordering(schema, options)?,
+        None,
+    )?;
+    let lengths: Vec<usize> = built.iter().map(RecordBatch::num_rows).collect();
+    slices(&sorted, &lengths)
+}
+
+/// The order of the first `options.len()` columns of `schema`, each by its
+/// options
+fn key_ordering(
+    schema: &SchemaRef,
+    options: &[SortOptions],
+) -> datafusion_common::Result<LexOrdering> {
     if options.len() > schema.fields().len() {
         return plan_err!(
             "{} sort keys for {} columns",
@@ -512,30 +579,36 @@ pub fn sorted_source(
     ) else {
         return plan_err!("a sorted input needs at least one sort key");
     };
-    let built: Vec<RecordBatch> = batches.iter().map(GeneratedBatch::build).collect();
-    let sorted = sort_batch(&concat_batches(schema, &built)?, &ordering, None)?;
+    Ok(ordering)
+}
+
+/// `batch` cut into consecutive batches of `lengths` rows
+fn slices(batch: &RecordBatch, lengths: &[usize]) -> datafusion_common::Result<Vec<RecordBatch>> {
+    if lengths.iter().sum::<usize>() != batch.num_rows() {
+        return plan_err!("batch lengths {lengths:?} for {} rows", batch.num_rows());
+    }
     let mut offset = 0;
-    let split = built
+    Ok(lengths
         .iter()
-        .map(|b| {
-            let slice = sorted.slice(offset, b.num_rows());
-            offset += b.num_rows();
-            slice
+        .map(|&n| {
+            offset += n;
+            batch.slice(offset - n, n)
         })
-        .collect();
-    table(schema, split, Some(ordering))
+        .collect())
 }
 
 /// A one-partition `StreamingTableExec` that yields `batches`, in `ordering`
-/// if there is one
+/// if there is one, and then an error if it `fails`
 fn table(
     schema: &SchemaRef,
     batches: Vec<RecordBatch>,
     ordering: Option<LexOrdering>,
+    fails: bool,
 ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
     let partition = Batches {
         schema: Arc::clone(schema),
         batches,
+        fails,
     };
     Ok(Arc::new(StreamingTableExec::try_new(
         Arc::clone(schema),
@@ -661,6 +734,224 @@ pub fn check_join_order(case: &JoinCase, plan: &JoinPlan) -> Result<(), TestCase
     })
 }
 
+/// The number of rows in each batch of each side of a case, for
+/// [`check_join_split`]
+#[derive(Clone, Debug)]
+pub struct Split {
+    pub left: Vec<usize>,
+    pub right: Vec<usize>,
+}
+
+/// Splits of each side's rows of `case` into one to five batches, empty
+/// batches included, whatever the batches it was drawn in
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt_datafusion::{joins, splits};
+/// use arrow_schema::DataType;
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let case = joins(&[DataType::Int32]).unwrap().new_tree(&mut runner).unwrap().current();
+/// let split = splits(&case).new_tree(&mut runner).unwrap().current();
+/// let rows: usize = case.left.iter().map(|b| b.num_rows).sum();
+/// assert_eq!(split.left.iter().sum::<usize>(), rows);
+/// assert!((1..=5).contains(&split.left.len()));
+/// ```
+pub fn splits(case: &JoinCase) -> BoxedStrategy<Split> {
+    let lengths = |batches: &[GeneratedBatch]| {
+        let n: usize = batches.iter().map(|b| b.num_rows).sum();
+        vec(0..=n, 0..=4).prop_map(move |mut cuts| {
+            cuts.sort_unstable();
+            cuts.push(n);
+            let mut start = 0;
+            cuts.into_iter()
+                .map(|end| {
+                    let length = end - start;
+                    start = end;
+                    length
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    (lengths(&case.left), lengths(&case.right))
+        .prop_map(|(left, right)| Split { left, right })
+        .boxed()
+}
+
+/// Checks the split law: the join `plan` of `case` gives the same result as
+/// in [`check_join_agreement`] on its inputs as drawn and on the same rows
+/// cut into the batches of `split`. For a case with sort options, the cuts
+/// fall in the sorted rows
+///
+/// # Errors
+///
+/// A failure that says how the two differ, or lengths of `split` that do
+/// not add up to a side's rows
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt_datafusion::{Split, check_join_split, hash_join, joins};
+/// use arrow_schema::DataType;
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let case = joins(&[DataType::Int32]).unwrap().new_tree(&mut runner).unwrap().current();
+/// let rows = |side: &[arrow_pbt::generator::GeneratedBatch]| side.iter().map(|b| b.num_rows).sum();
+/// let one_batch = Split { left: vec![rows(&case.left)], right: vec![rows(&case.right)] };
+/// let _ = check_join_split(&case, &hash_join, &one_batch);
+/// let too_many = Split { left: vec![rows(&case.left) + 1], right: vec![0] };
+/// assert!(check_join_split(&case, &hash_join, &too_many).is_err());
+/// ```
+pub fn check_join_split(
+    case: &JoinCase,
+    plan: &JoinPlan,
+    split: &Split,
+) -> Result<(), TestCaseError> {
+    let drawn = inputs(case)?;
+    let cut = |schema: &SchemaRef, batches: &[RecordBatch], lengths: &[usize]| {
+        concat_batches(schema, batches)
+            .map_err(DataFusionError::from)
+            .and_then(|all| slices(&all, lengths))
+            .map_err(|e| fail(format!("splitting the inputs: {e}")))
+    };
+    let resplit = Inputs {
+        left: cut(&case.left_schema, &drawn.left, &split.left)?,
+        right: cut(&case.right_schema, &drawn.right, &split.right)?,
+        right_fails: false,
+    };
+    compare(
+        (
+            "the drawn batches",
+            output(execute_inputs(case, plan, &[], drawn, None)?)?,
+        ),
+        (
+            "the re-split batches",
+            output(execute_inputs(case, plan, &[], resplit, None)?)?,
+        ),
+    )
+}
+
+/// Checks the fetch laws on the join `plan` of `case` in one partition,
+/// since a fetch limits each partition. A join that fails without a fetch
+/// is a discard, since [`check_join_agreement`] checks failures
+///
+/// - With a fetch of `fraction` of one more than the join's `n` rows, rounded
+///   down, the join returns `min(fetch, n)` of the rows it returns without
+///   one.
+/// - When each output row comes from one row of the right input, as in the
+///   inner, right, right semi, right anti, and right mark joins of a join
+///   that probes its right input: with the right input cut to its first one
+///   to all batches, chosen by `probe_batches` modulo their number, which give
+///   `k` rows, a fetch of one to `k` rows, chosen by `fraction`, returns that
+///   many of those rows without reading past those batches. The right input
+///   returns an error after them, so a join that reads on fails.
+///
+/// # Errors
+///
+/// A failure that says which law the join broke, or a discard when the join
+/// fails without a fetch
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt_datafusion::{check_join_fetch, hash_join, joins};
+/// use arrow_schema::DataType;
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let case = joins(&[DataType::Int32]).unwrap().new_tree(&mut runner).unwrap().current();
+/// let _ = check_join_fetch(&case, &hash_join, 0.5, 1);
+/// ```
+pub fn check_join_fetch(
+    case: &JoinCase,
+    plan: &JoinPlan,
+    fraction: f64,
+    probe_batches: usize,
+) -> Result<(), TestCaseError> {
+    let case = &JoinCase {
+        partitions: 1,
+        ..case.clone()
+    };
+    let fraction = fraction.clamp(0.0, 1.0);
+    let drawn = inputs(case)?;
+    let rows_of = |inputs: Inputs, fetch| -> Result<Result<Vec<String>, String>, TestCaseError> {
+        Ok(output(execute_inputs(case, plan, &[], inputs, fetch)?)?
+            .map(|(_, rows)| rows)
+            .map_err(|e| e.to_string()))
+    };
+    let Ok(all) = rows_of(drawn.clone(), None)? else {
+        return Err(TestCaseError::reject("the join fails"));
+    };
+    // Up to one more than the rows, so that some fetches exceed them
+    let fetch = (fraction * (all.len() + 1) as f64) as usize;
+    let some = rows_of(drawn.clone(), Some(fetch))?
+        .map_err(|e| fail(format!("with fetch {fetch} the join fails: {e}")))?;
+    check_fetched(&some, &all, fetch.min(all.len()), &format!("fetch {fetch}"))?;
+
+    if !matches!(
+        case.join_type,
+        JoinType::Inner
+            | JoinType::Right
+            | JoinType::RightSemi
+            | JoinType::RightAnti
+            | JoinType::RightMark
+    ) {
+        return Ok(());
+    }
+    if drawn.right.is_empty() {
+        return Ok(());
+    }
+    let n = 1 + probe_batches % drawn.right.len();
+    let first = Inputs {
+        right: drawn.right[..n].to_vec(),
+        ..drawn
+    };
+    let Ok(those) = rows_of(first.clone(), None)? else {
+        return Err(TestCaseError::reject("the join fails"));
+    };
+    if those.is_empty() {
+        return Ok(());
+    }
+    let fetch = 1 + (fraction * (those.len() - 1) as f64) as usize;
+    let failing = Inputs {
+        right_fails: true,
+        ..first
+    };
+    let some = rows_of(failing, Some(fetch))?.map_err(|e| {
+        fail(format!(
+            "with fetch {fetch}, which the first {n} right batches give, the join reads on: {e}"
+        ))
+    })?;
+    check_fetched(
+        &some,
+        &those,
+        fetch,
+        &format!("fetch {fetch} of the first {n} right batches"),
+    )
+}
+
+/// Fails unless the sorted rows `some` are `expected` of the sorted rows `all`
+fn check_fetched(
+    some: &[String],
+    all: &[String],
+    expected: usize,
+    what: &str,
+) -> Result<(), TestCaseError> {
+    let (extra, _) = difference(some, all);
+    if some.len() != expected || !extra.is_empty() {
+        return Err(fail(format!(
+            "with {what} the join gives {} rows, expected {expected} of its {} rows without a fetch. Rows it gives that it does not without a fetch, first 3: {:?}",
+            some.len(),
+            all.len(),
+            &extra[..extra.len().min(3)]
+        )));
+    }
+    Ok(())
+}
+
 /// A join's output: its schema and its rows, each as the oracle's values
 /// in `Debug` form, sorted, so that equal multisets compare equal
 type Output = (SchemaRef, Vec<String>);
@@ -671,7 +962,14 @@ fn outcome(
     plan: &JoinPlan,
     options: &[(&str, &str)],
 ) -> Result<Result<Output, DataFusionError>, TestCaseError> {
-    match execute(case, plan, options)? {
+    output(execute(case, plan, options)?)
+}
+
+/// The output of a join that ran, or its error
+fn output(
+    executed: Result<Executed, DataFusionError>,
+) -> Result<Result<Output, DataFusionError>, TestCaseError> {
+    match executed {
         Err(e) => Ok(Err(e)),
         Ok((join, batches)) => {
             let schema = join.schema();
@@ -689,6 +987,50 @@ fn execute(
     plan: &JoinPlan,
     options: &[(&str, &str)],
 ) -> Result<Result<Executed, DataFusionError>, TestCaseError> {
+    execute_inputs(case, plan, options, inputs(case)?, None)
+}
+
+/// A case's two inputs as batches, before they become plans
+#[derive(Clone)]
+struct Inputs {
+    left: Vec<RecordBatch>,
+    right: Vec<RecordBatch>,
+    /// Whether the right input returns an error after its batches
+    right_fails: bool,
+}
+
+/// The batches of each side of `case`, sorted on the keys when the case has
+/// sort options. Inputs that cannot be built are a failure of the case, not
+/// of a join, so that a known bug in building them is counted rather than
+/// passing as two joins that both fail
+fn inputs(case: &JoinCase) -> Result<Inputs, TestCaseError> {
+    let side = |schema: &SchemaRef, batches: &[GeneratedBatch]| {
+        let built: Vec<RecordBatch> = batches.iter().map(GeneratedBatch::build).collect();
+        match &case.sort_options {
+            None => Ok(built),
+            Some(options) => sorted(schema, &built, options),
+        }
+    };
+    let build = || -> datafusion_common::Result<Inputs> {
+        Ok(Inputs {
+            left: side(&case.left_schema, &case.left)?,
+            right: side(&case.right_schema, &case.right)?,
+            right_fails: false,
+        })
+    };
+    build().map_err(|e| fail(format!("building the inputs: {e}")))
+}
+
+/// Runs the join `plan` of `case` on `inputs` with `options` set, and with
+/// `fetch` if there is one. Each input declares the case's key order when
+/// the case has sort options
+fn execute_inputs(
+    case: &JoinCase,
+    plan: &JoinPlan,
+    options: &[(&str, &str)],
+    inputs: Inputs,
+    fetch: Option<usize>,
+) -> Result<Result<Executed, DataFusionError>, TestCaseError> {
     let mut config = SessionConfig::new().with_batch_size(case.batch_size);
     for (key, value) in options {
         config
@@ -697,18 +1039,32 @@ fn execute(
             .map_err(|e| fail(format!("setting {key} to {value}: {e}")))?;
     }
     let context = Arc::new(TaskContext::default().with_session_config(config));
-    // Inputs that cannot be built are a failure of the case, not of a join,
-    // so that a known bug in building them is counted rather than passing
-    // as two joins that both fail
-    let input = |schema, batches| match &case.sort_options {
-        None => source(schema, batches),
-        Some(options) => sorted_source(schema, batches, options),
-    };
-    let (left, right) = input(&case.left_schema, &case.left)
-        .and_then(|l| Ok((l, input(&case.right_schema, &case.right)?)))
-        .map_err(|e| fail(format!("building the inputs: {e}")))?;
     let run = || -> datafusion_common::Result<Executed> {
+        let ordering = |schema| {
+            case.sort_options
+                .as_deref()
+                .map(|o| key_ordering(schema, o))
+                .transpose()
+        };
+        let left = table(
+            &case.left_schema,
+            inputs.left,
+            ordering(&case.left_schema)?,
+            false,
+        )?;
+        let right = table(
+            &case.right_schema,
+            inputs.right,
+            ordering(&case.right_schema)?,
+            inputs.right_fails,
+        )?;
         let join = plan(case, left, right)?;
+        let join = match fetch {
+            None => join,
+            Some(n) => join.with_fetch(Some(n)).ok_or_else(|| {
+                DataFusionError::Plan(format!("{} does not take a fetch", join.name()))
+            })?,
+        };
         // A current-thread runtime keeps DataFusion's tasks on this thread,
         // off the other workers of the seed pool
         let runtime = tokio::runtime::Builder::new_current_thread()
