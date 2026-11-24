@@ -5,14 +5,18 @@ use std::sync::Arc;
 use arrow_array::{Array, RecordBatch};
 use arrow_pbt::generator::{GeneratedBatch, ValueDomain, pooled_batch, schemas, value_pool};
 use arrow_pbt::val::{Val, check_rows, vals};
-use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef};
-use datafusion_common::{DataFusionError, JoinSide, JoinType, NullEquality};
+use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef, SortOptions};
+use arrow_select::concat::concat_batches;
+use datafusion_common::{DataFusionError, JoinSide, JoinType, NullEquality, plan_err};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext, config::SessionConfig};
 use datafusion_expr::Operator;
-use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_expr::expressions::{BinaryExpr, Column};
+use datafusion_physical_expr::{LexOrdering, PhysicalExpr, PhysicalSortExpr};
 use datafusion_physical_plan::joins::utils::{ColumnIndex, JoinFilter};
-use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec, PartitionMode};
+use datafusion_physical_plan::joins::{
+    HashJoinExec, NestedLoopJoinExec, PartitionMode, SortMergeJoinExec,
+};
+use datafusion_physical_plan::sorts::sort::sort_batch;
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion_physical_plan::streaming::{PartitionStream, StreamingTableExec};
 use datafusion_physical_plan::{ExecutionPlan, collect};
@@ -50,6 +54,10 @@ pub struct JoinCase {
     /// How a hash join collects its build side. Each side is one partition
     pub partition_mode: PartitionMode,
     pub batch_size: usize,
+    /// The sort options of each key when both inputs are sorted on their
+    /// keys (see [`sorted_source`]), or `None` when the inputs keep the order
+    /// they were drawn in
+    pub sort_options: Option<Vec<SortOptions>>,
 }
 
 /// Joins on one or two keys of the types in `key_types`, of every join
@@ -156,8 +164,44 @@ pub fn joins(key_types: &[DataType]) -> Result<BoxedStrategy<JoinCase>, String> 
                 filter,
                 partition_mode,
                 batch_size,
+                sort_options: None,
             },
         )
+        .boxed())
+}
+
+/// The cases of [`joins`] with both inputs sorted on their keys, as a
+/// sort-merge join needs. `descending` and `nulls_first` are drawn for each
+/// key, since the join compares keys in the order they give
+///
+/// # Errors
+///
+/// As [`joins`]
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt_datafusion::sort_merge_joins;
+/// use arrow_schema::DataType;
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let case = sort_merge_joins(&[DataType::Int32]).unwrap().new_tree(&mut runner).unwrap().current();
+/// assert_eq!(case.sort_options.unwrap().len(), case.keys);
+/// assert!(sort_merge_joins(&[DataType::Float16]).is_err());
+/// ```
+pub fn sort_merge_joins(key_types: &[DataType]) -> Result<BoxedStrategy<JoinCase>, String> {
+    let options = (any::<bool>(), any::<bool>())
+        .prop_map(|(descending, nulls_first)| SortOptions::new(descending, nulls_first));
+    Ok(joins(key_types)?
+        .prop_flat_map(move |case| {
+            let keys = case.keys;
+            (Just(case), vec(options.clone(), keys))
+        })
+        .prop_map(|(case, options)| JoinCase {
+            sort_options: Some(options),
+            ..case
+        })
         .boxed())
 }
 
@@ -275,6 +319,54 @@ pub fn nested_loop_join(
     )?))
 }
 
+/// A sort-merge join of `case`, on its keys, with its residual filter, null
+/// equality, and sort options
+///
+/// # Errors
+///
+/// A case without sort options, whose inputs are not sorted, or one that
+/// `SortMergeJoinExec::try_new` rejects
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt_datafusion::{sort_merge_join, sort_merge_joins, sorted_source};
+/// use arrow_schema::DataType;
+/// use datafusion_physical_plan::ExecutionPlan;
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let case = sort_merge_joins(&[DataType::Int64]).unwrap().new_tree(&mut runner).unwrap().current();
+/// let options = case.sort_options.clone().unwrap();
+/// let left = sorted_source(&case.left_schema, &case.left, &options).unwrap();
+/// let right = sorted_source(&case.right_schema, &case.right, &options).unwrap();
+/// let join = sort_merge_join(&case, left.clone(), right.clone()).unwrap();
+/// assert_eq!(join.name(), "SortMergeJoinExec");
+/// let unsorted = arrow_pbt_datafusion::JoinCase { sort_options: None, ..case.clone() };
+/// assert!(sort_merge_join(&unsorted, left, right).is_err());
+/// ```
+pub fn sort_merge_join(
+    case: &JoinCase,
+    left: Arc<dyn ExecutionPlan>,
+    right: Arc<dyn ExecutionPlan>,
+) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+    let Some(sort_options) = &case.sort_options else {
+        return plan_err!("a sort-merge join needs a case whose inputs are sorted");
+    };
+    let on = (0..case.keys)
+        .map(|i| (column(&case.left_schema, i), column(&case.right_schema, i)))
+        .collect();
+    Ok(Arc::new(SortMergeJoinExec::try_new(
+        left,
+        right,
+        on,
+        join_filter(case, false),
+        case.join_type,
+        sort_options.clone(),
+        case.null_equality,
+    )?))
+}
+
 fn column(schema: &Schema, i: usize) -> Arc<dyn PhysicalExpr> {
     Arc::new(Column::new(schema.field(i).name(), i))
 }
@@ -368,9 +460,75 @@ pub fn source(
     schema: &SchemaRef,
     batches: &[GeneratedBatch],
 ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+    table(schema, batches.iter().map(GeneratedBatch::build).collect())
+}
+
+/// An input of one partition that yields the rows of `batches` sorted on
+/// their first `options.len()` columns, the first by `options[0]` and so on,
+/// by DataFusion's `sort_batch`. Each batch keeps its number of rows, so the
+/// sorted rows split where the drawn ones did
+///
+/// # Errors
+///
+/// No options, more options than columns, or a failure to concatenate or
+/// sort the rows
+///
+/// # Example
+///
+/// ```
+/// use arrow_pbt_datafusion::{joins, sorted_source};
+/// use arrow_schema::{DataType, SortOptions};
+/// use proptest::strategy::{Strategy, ValueTree};
+/// use proptest::test_runner::TestRunner;
+/// let mut runner = TestRunner::deterministic();
+/// let case = joins(&[DataType::Int32]).unwrap().new_tree(&mut runner).unwrap().current();
+/// let options = vec![SortOptions::default(); case.keys];
+/// let left = sorted_source(&case.left_schema, &case.left, &options).unwrap();
+/// assert_eq!(left.schema(), case.left_schema);
+/// assert!(sorted_source(&case.left_schema, &case.left, &[]).is_err());
+/// ```
+pub fn sorted_source(
+    schema: &SchemaRef,
+    batches: &[GeneratedBatch],
+    options: &[SortOptions],
+) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+    if options.len() > schema.fields().len() {
+        return plan_err!(
+            "{} sort keys for {} columns",
+            options.len(),
+            schema.fields().len()
+        );
+    }
+    let Some(ordering) = LexOrdering::new(
+        options
+            .iter()
+            .enumerate()
+            .map(|(i, &o)| PhysicalSortExpr::new(column(schema, i), o)),
+    ) else {
+        return plan_err!("a sorted input needs at least one sort key");
+    };
+    let built: Vec<RecordBatch> = batches.iter().map(GeneratedBatch::build).collect();
+    let sorted = sort_batch(&concat_batches(schema, &built)?, &ordering, None)?;
+    let mut offset = 0;
+    let split = built
+        .iter()
+        .map(|b| {
+            let slice = sorted.slice(offset, b.num_rows());
+            offset += b.num_rows();
+            slice
+        })
+        .collect();
+    table(schema, split)
+}
+
+/// A one-partition `StreamingTableExec` that yields `batches`
+fn table(
+    schema: &SchemaRef,
+    batches: Vec<RecordBatch>,
+) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
     let partition = Batches {
         schema: Arc::clone(schema),
-        batches: batches.iter().map(GeneratedBatch::build).collect(),
+        batches,
     };
     Ok(Arc::new(StreamingTableExec::try_new(
         Arc::clone(schema),
@@ -468,9 +626,17 @@ fn outcome(
             .map_err(|e| fail(format!("setting {key} to {value}: {e}")))?;
     }
     let context = Arc::new(TaskContext::default().with_session_config(config));
+    // Inputs that cannot be built are a failure of the case, not of a join,
+    // so that a known bug in building them is counted rather than passing
+    // as two joins that both fail
+    let input = |schema, batches| match &case.sort_options {
+        None => source(schema, batches),
+        Some(options) => sorted_source(schema, batches, options),
+    };
+    let (left, right) = input(&case.left_schema, &case.left)
+        .and_then(|l| Ok((l, input(&case.right_schema, &case.right)?)))
+        .map_err(|e| fail(format!("building the inputs: {e}")))?;
     let run = || -> datafusion_common::Result<(SchemaRef, Vec<RecordBatch>)> {
-        let left = source(&case.left_schema, &case.left)?;
-        let right = source(&case.right_schema, &case.right)?;
         let join = plan(case, left, right)?;
         let schema = join.schema();
         // A current-thread runtime keeps DataFusion's tasks on this thread,

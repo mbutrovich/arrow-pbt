@@ -23,7 +23,7 @@ pub use expr::{
 };
 pub use join::{
     JoinCase, JoinPlan, check_join_agreement, check_join_config, hash_join, joins,
-    nested_loop_join, source,
+    nested_loop_join, sort_merge_join, sort_merge_joins, sorted_source, source,
 };
 
 /// One argument of a scalar function call
